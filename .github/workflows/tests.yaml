@@ -1,0 +1,36 @@
+name: Test Suite
+
+on:
+  - pull_request
+
+jobs:
+  integration-test:
+    name: Integration test with LXD
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v2
+    - name: Setup Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.8
+    - name: Install Dependencies
+      run: |
+        pip install tox
+        sudo apt-get remove -qy lxd lxd-client
+        sudo snap install core
+        sudo snap install lxd
+        sudo lxd waitready
+        sudo lxd init --auto
+        sudo chmod a+wr /var/snap/lxd/common/lxd/unix.socket
+        echo "/snap/bin" >> $GITHUB_PATH
+        lxc network set lxdbr0 ipv6.address none
+        sudo snap install juju --classic
+        sudo snap install juju-wait --classic
+    - name: Bootstrap
+      run: juju bootstrap localhost/localhost
+    - name: Add application
+      run: juju deploy ubuntu
+    - name: Run integration tests
+      run: tox -e py38
