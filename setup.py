@@ -30,8 +30,6 @@ setup(
         "pyyaml",
         "juju",
         "juju-wait",
-        "aioify",
-        "requests",
         "charm-tools",
         "charmcraft",
     ],

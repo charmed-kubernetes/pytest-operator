@@ -1,25 +1,25 @@
 import pytest
 from pathlib import Path
-from pytest_operator.plugin import charm_build
 
-pytest_plugins = "pytester"
-fixtures_path = Path("fixtures")
-
-
-@pytest.mark.asyncio
-async def test_operator_connection(operatormodel, operatortools):
-    assert operatormodel.applications.keys()
+tests_data_path = Path(__file__).parent / "data"
+tests_charms_path = tests_data_path / "charms"
 
 
 @pytest.mark.asyncio
-async def test_build_reactive_charm():
-    charm_path = fixtures_path / "test-charm"
-    await charm_build(str(charm_path))
-    assert Path("test-charm.charm").exists()
+async def test_reactive_charm(operator_model, operator_tools):
+    src = tests_charms_path / "reactive-framework"
+    dst = await operator_tools.build_charm(src)
+    assert dst.exists()
+    assert dst.name == "reactive-framework.charm"
+    await operator_model.deploy(dst)
+    await operator_tools.juju_wait()
 
 
 @pytest.mark.asyncio
-async def test_build_ops_charm():
-    charm_path = fixtures_path / "new-style-charm"
-    await charm_build(str(charm_path))
-    assert Path("new-style-charm.charm").exists()
+async def test_operator_charm(operator_model, operator_tools):
+    src = tests_charms_path / "operator-framework"
+    dst = await operator_tools.build_charm(src)
+    assert dst.exists()
+    assert dst.name == "operator-framework.charm"
+    await operator_model.deploy(dst)
+    await operator_tools.juju_wait()

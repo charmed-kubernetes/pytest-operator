@@ -1,0 +1,9 @@
+name: reactive-framework
+summary: a test charm
+maintainer: Adam Stokes <adam.stokes@ubuntu.com>
+description: |
+    a test charm
+series:
+  - focal
+tags:
+  - misc
