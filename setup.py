@@ -25,8 +25,9 @@ setup(
     version="0.1.0",
     zip_safe=True,
     install_requires=[
+        "asynctest ; python_version<'3.8'",
+        "ipdb",
         "pytest",
-        "pytest-asyncio",
         "pyyaml",
         "juju",
         "juju-wait",
