@@ -2,9 +2,12 @@ from pytest_operator import OperatorTest
 
 
 class PluginTest(OperatorTest):
-
     async def test_build_and_deploy(self):
         bundle = self.render_bundle(
+            # Normally, this would just be a filename like for the charms, rather
+            # than an in-line YAML dump, but for visibility purposes in using this
+            # test as an example, I included it directly here, since it's small. E.g.:
+            # "tests/data/bundle.yaml",
             """
                 series: focal
                 applications:
