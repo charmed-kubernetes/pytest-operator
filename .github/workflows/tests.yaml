@@ -4,9 +4,30 @@ on:
   - pull_request
 
 jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: [3.6, 3.7, 3.8, 3.9]
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v2
+    - name: Setup Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: ${{ matrix.python }}
+    - name: Install Dependencies
+      run: |
+        pip install tox
+    - name: Run lint
+      run: tox -e lint
   integration-test:
     name: Integration test with LXD
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: [3.6, 3.7, 3.8, 3.9]
     timeout-minutes: 40
     steps:
     - name: Check out code
@@ -14,7 +35,7 @@ jobs:
     - name: Setup Python
       uses: actions/setup-python@v2
       with:
-        python-version: 3.8
+        python-version: ${{ matrix.python }}
     - name: Install Dependencies
       run: |
         pip install tox
@@ -27,10 +48,7 @@ jobs:
         echo "/snap/bin" >> $GITHUB_PATH
         lxc network set lxdbr0 ipv6.address none
         sudo snap install juju --classic
-        sudo snap install juju-wait --classic
     - name: Bootstrap
       run: juju bootstrap localhost/localhost
-    - name: Add application
-      run: juju deploy ubuntu
-    - name: Run integration tests
-      run: tox -e py38
+    - name: Run test
+      run: tox -e py3

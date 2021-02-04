@@ -1,0 +1,8 @@
+# Copyright 2021 adam
+# See LICENSE file for licensing details.
+name: operator-framework
+description: |
+  TODO: fill out the charm's description
+summary: |
+  TODO: fill out the charm's summary
+series: [focal]
