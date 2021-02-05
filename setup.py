@@ -30,9 +30,9 @@ setup(
         "pytest",
         "pyyaml",
         "juju",
-        "juju-wait",
         "charm-tools",
         "charmcraft",
+        "jinja2",
     ],
     entry_points={
         "pytest11": [
