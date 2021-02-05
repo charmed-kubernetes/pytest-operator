@@ -3,7 +3,6 @@ import re
 import shutil
 import subprocess
 import textwrap
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from random import choices
 from string import hexdigits
@@ -20,11 +19,6 @@ from .shims import IsolatedAsyncioTestCase
 
 class ErroredUnitError(AssertionError):
     pass
-
-
-def parse_ts(ts):
-    """Parse a Juju provided timestamp, which must be UTC."""
-    return datetime.strptime(ts, "%d %b %Y %H:%M:%SZ").replace(tzinfo=timezone.utc)
 
 
 def pytest_addoption(parser):
@@ -222,65 +216,3 @@ class OperatorTest(IsolatedAsyncioTestCase):
             self.render_bundle(bundle_path, context=context, **kwcontext)
             for bundle_path in bundles
         ]
-
-    # TODO: Up-port this to libjuju.
-    async def wait_for_bundle(
-        self,
-        bundle_path,
-        raise_on_error=True,
-        timeout=10 * 60,
-        idle_period=15,
-        check_freq=0.5,
-    ):
-        """Wait for the applications and units in the given bundle to settle.
-
-        The bundle is considered "settled" when all units are simultaneously "idle"
-        for at least `idle_period` seconds.
-
-        :param bundle_path (str or Path): Path to bundle to read.
-
-        :param raise_on_error (bool): If True, then any unit going into "error" status
-            immediately raises an ErroredUnitError (which is an AssertionError).
-
-        :param timeout (float): How long to wait, in seconds, for the bundle settles
-            before raising an asyncio.TimeoutError. If None, will wait forever.
-
-        :param idle_period (float): How long, in seconds, between agent status updates a
-            unit needs to be idle for, to allow for queued hooks to start.
-
-        :param check_freq (float): How frequently, in seconds, to check the model.
-        """
-        timeout = timedelta(timeout) if timeout is not None else None
-        idle_period = timedelta(idle_period)
-        bundle = yaml.safe_load(Path(bundle_path).read_text())
-        start_time = datetime.now()
-        apps = list(bundle["applications"].keys())
-        status_times = {}
-        while True:
-            all_ready = True
-            errored_units = []
-            for app in apps:
-                if app not in self.model.applications:
-                    continue
-                for unit in self.model.applications[app].units:
-                    if raise_on_error and unit.workload_status == "error":
-                        errored_units.append(unit.name)
-                    if unit.name in status_times:
-                        prev_status_time = status_times[unit.name]
-                        curr_status_time = parse_ts(unit.agent_status_since)
-                        if curr_status_time - prev_status_time < idle_period:
-                            all_ready = False
-                    status_times[unit.name] = parse_ts(unit.agent_status_since)
-                expected_num_units = bundle["applications"][app]["num_units"]
-                actual_num_units = len(self.model.applications[app].units)
-                if actual_num_units < expected_num_units:
-                    all_ready = False
-            if errored_units:
-                s = "s" if len(errored_units) > 1 else ""
-                errored_units = ", ".join(errored_units)
-                raise ErroredUnitError(f"Unit{s} in error: {errored_units}")
-            if all_ready:
-                break
-            if timeout is not None and datetime.now() - start_time > timeout:
-                raise asyncio.TimeoutError(f"Timed out waiting for {bundle_path}")
-            await asyncio.sleep(check_freq)

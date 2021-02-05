@@ -24,6 +24,6 @@ class PluginTest(OperatorTest):
             ),
         )
         await self.model.deploy(bundle)
-        await self.wait_for_bundle(bundle)  # TODO: Be up-ported to libjuju
+        await self.model.wait_for_idle()
         for unit in self.model.units.values():
             assert f"{unit.name}: {unit.workload_status}".endswith("active")
