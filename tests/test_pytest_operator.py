@@ -27,3 +27,9 @@ class PluginTest(OperatorTest):
         await self.model.wait_for_idle()
         for unit in self.model.units.values():
             assert f"{unit.name}: {unit.workload_status}".endswith("active")
+
+    async def test_shared_model_and_test_order(self):
+        assert self.model.applications.keys() == {
+            "reactive-framework",
+            "operator-framework",
+        }

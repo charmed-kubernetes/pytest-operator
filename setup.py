@@ -25,7 +25,6 @@ setup(
     version="0.2.0",
     zip_safe=True,
     install_requires=[
-        "asynctest ; python_version<'3.8'",
         "ipdb",
         "pytest",
         "pyyaml",
