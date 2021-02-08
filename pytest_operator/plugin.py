@@ -80,21 +80,7 @@ def _cls_to_model_name(cls):
     return re.sub(r"[^a-z0-9-]", "-", re.sub(camel_pat, _decamelify, full_name))
 
 
-@pytest.fixture(scope="class")
-def inject_fixtures(request, tmp_path_factory):
-    cls = request.cls
-    cls.request = request
-    cls.tmp_path = tmp_path_factory.mktemp(_cls_to_model_name(cls))
-    cls.loop = asyncio.new_event_loop()
-    cls.loop.run_until_complete(cls.setup_model())
-
-    yield
-
-    cls.loop.run_until_complete(cls.cleanup_model())
-    cls.loop.close()
-
-
-def wrap_async_tests(cls):
+def _wrap_async_tests(cls):
     def _wrap_async(async_method):
         @wraps(async_method)
         def _run_async(*args, **kwargs):
@@ -107,11 +93,24 @@ def wrap_async_tests(cls):
             continue
         setattr(cls, name, _wrap_async(method))
 
-    return cls
+
+@pytest.fixture(scope="class")
+def inject_fixtures(request, tmp_path_factory):
+    cls = request.cls
+    cls.request = request
+    cls.tmp_path = tmp_path_factory.mktemp(_cls_to_model_name(cls))
+    cls.loop = asyncio.new_event_loop()
+    cls.loop.run_until_complete(cls.setup_model())
+
+    _wrap_async_tests(cls)
+
+    yield
+
+    cls.loop.run_until_complete(cls.cleanup_model())
+    cls.loop.close()
 
 
 @pytest.mark.usefixtures("inject_fixtures")
-@wrap_async_tests
 class OperatorTest(TestCase):
     """Base class for testing Operator Charms."""
 
