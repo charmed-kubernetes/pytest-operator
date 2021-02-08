@@ -100,6 +100,7 @@ def inject_fixtures(request, tmp_path_factory):
     cls.request = request
     cls.tmp_path = tmp_path_factory.mktemp(_cls_to_model_name(cls))
     cls.loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(cls.loop)
     cls.loop.run_until_complete(cls.setup_model())
 
     _wrap_async_tests(cls)
