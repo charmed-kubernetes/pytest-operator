@@ -1,8 +1,10 @@
 import asyncio
+import inspect
 import re
 import shutil
 import subprocess
 import textwrap
+from functools import wraps
 from pathlib import Path
 from random import choices
 from string import hexdigits
@@ -14,11 +16,7 @@ import yaml
 from juju.controller import Controller
 from juju.model import Model
 
-from .shims import IsolatedAsyncioTestCase
-
-
-class ErroredUnitError(AssertionError):
-    pass
+from unittest import TestCase
 
 
 def pytest_addoption(parser):
@@ -63,62 +61,101 @@ def check_deps(autouse=True):
         )
 
 
-class OperatorTest(IsolatedAsyncioTestCase):
+def _cls_to_model_name(cls):
+    def _decamelify(match):
+        prefix = f"{match.group(1)}-" if match.group(1) else ""
+        if match.group(3) and len(match.group(2)) > 1:
+            print(match.groups())
+            return (
+                f"{prefix}{match.group(2)[:-1].lower()}-"
+                f"{match.group(2)[-1:].lower()}{match.group(3)}"
+            )
+        elif match.group(3):
+            return f"{prefix}{match.group(2).lower()}{match.group(3)}"
+        else:
+            return f"{prefix}{match.group(2).lower()}"
+
+    camel_pat = re.compile(r"([a-z]?)([A-Z]+)([a-z]?)")
+    full_name = ".".join([cls.__module__, cls.__qualname__])
+    return re.sub(r"[^a-z0-9-]", "-", re.sub(camel_pat, _decamelify, full_name))
+
+
+def _wrap_async_tests(cls):
+    def _wrap_async(async_method):
+        @wraps(async_method)
+        def _run_async(*args, **kwargs):
+            return cls.loop.run_until_complete(async_method(*args, **kwargs))
+
+        return _run_async
+
+    for name, method in inspect.getmembers(cls, inspect.iscoroutinefunction):
+        if not name.startswith("test_"):
+            continue
+        setattr(cls, name, _wrap_async(method))
+
+
+@pytest.fixture(scope="class")
+def inject_fixtures(request, tmp_path_factory):
+    cls = request.cls
+    cls.request = request
+    cls.tmp_path = tmp_path_factory.mktemp(_cls_to_model_name(cls))
+    cls.loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(cls.loop)
+    cls.loop.run_until_complete(cls.setup_model())
+
+    _wrap_async_tests(cls)
+
+    yield
+
+    cls.loop.run_until_complete(cls.cleanup_model())
+    cls.loop.close()
+
+
+@pytest.mark.usefixtures("inject_fixtures")
+class OperatorTest(TestCase):
     """Base class for testing Operator Charms."""
 
-    @pytest.fixture(autouse=True)
-    def handle_fixtures(self, request, tmp_path):
-        self.request = request
-        self.tmp_path = tmp_path
+    # These will be injected by inject_fixtures.
+    request = None
+    tmp_path = None
+    loop = None
+    model = None
 
-    def _modelify(self, name):
-        def _decamelify(match):
-            prefix = f"{match.group(1)}-" if match.group(1) else ""
-            if match.group(3) and len(match.group(2)) > 1:
-                print(match.groups())
-                return (
-                    f"{prefix}{match.group(2)[:-1].lower()}-"
-                    f"{match.group(2)[-1:].lower()}{match.group(3)}"
-                )
-            elif match.group(3):
-                return f"{prefix}{match.group(2).lower()}{match.group(3)}"
-            else:
-                return f"{prefix}{match.group(2).lower()}"
-
-        camel_pat = re.compile(r"([a-z]?)([A-Z]+)([a-z]?)")
-        return re.sub(r"[^a-z0-9-]", "-", re.sub(camel_pat, _decamelify, name))
-
-    async def asyncSetUp(self):
-        self.cloud_name = self.request.config.getoption("--cloud")
-        self.controller_name = self.request.config.getoption("--controller")
-        self.model_name = self.request.config.getoption("--model")
-        if not self.model_name:
-            self.model_name = self._modelify(self.id())
+    @classmethod
+    async def setup_model(cls):
+        cls.cloud_name = cls.request.config.getoption("--cloud")
+        cls.controller_name = cls.request.config.getoption("--controller")
+        cls.model_name = cls.request.config.getoption("--model")
+        if not cls.model_name:
+            cls.model_name = _cls_to_model_name(cls)
             controller = Controller()
             if controller:
-                await controller.connect(self.controller_name)
+                await controller.connect(cls.controller_name)
             else:
                 await controller.connect_current()
-            self.model = await controller.add_model(
-                self.model_name, cloud_name=self.cloud_name
+            cls.model = await controller.add_model(
+                cls.model_name, cloud_name=cls.cloud_name
             )
             await controller.disconnect()
-            self.keep_model = self.request.config.getoption("--keep-models")
+            cls.keep_model = cls.request.config.getoption("--keep-models")
         else:
-            if self.controller_name:
-                self.model_name = f"{self.controller_name}:{self.model_name}"
-            self.model = Model()
-            await self.model.connect(self.model_name)
-            self.keep_model = True  # don't cleanup models we didn't create
+            if cls.controller_name:
+                cls.model_name = f"{cls.controller_name}:{cls.model_name}"
+            cls.model = Model()
+            await cls.model.connect(cls.model_name)
+            cls.keep_model = True  # don't cleanup models we didn't create
 
-    async def asyncTearDown(self):
-        if not self.keep_model:
-            controller = await self.model.get_controller()
-            await self.model.disconnect()
-            await controller.destroy_model(self.model_name)
+    @classmethod
+    async def cleanup_model(cls):
+        if not cls.model:
+            return
+        if not cls.keep_model:
+            controller = await cls.model.get_controller()
+            await cls.model.disconnect()
+            await controller.destroy_model(cls.model_name)
             await controller.disconnect()
         else:
-            await self.model.disconnect()
+            await cls.model.disconnect()
 
     async def build_charm(self, charm_path):
         """Builds a single charm.
