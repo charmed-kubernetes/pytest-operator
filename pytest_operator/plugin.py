@@ -4,10 +4,11 @@ import re
 import shutil
 import subprocess
 import textwrap
+import logging
 from functools import wraps
 from pathlib import Path
 from random import choices
-from string import hexdigits
+from string import hexdigits, ascii_lowercase, digits
 
 import jinja2
 import pytest
@@ -17,6 +18,9 @@ from juju.controller import Controller
 from juju.model import Model
 
 from unittest import TestCase
+
+
+log = logging.getLogger(__name__)
 
 
 def pytest_addoption(parser):
@@ -76,7 +80,8 @@ def _cls_to_model_name(cls):
             return f"{prefix}{match.group(2).lower()}"
 
     camel_pat = re.compile(r"([a-z]?)([A-Z]+)([a-z]?)")
-    full_name = ".".join([cls.__module__, cls.__qualname__])
+    suffix = "".join(choices(ascii_lowercase + digits, k=4))
+    full_name = f"{cls.__qualname__}-{suffix}"
     return re.sub(r"[^a-z0-9-]", "-", re.sub(camel_pat, _decamelify, full_name))
 
 
@@ -133,6 +138,7 @@ class OperatorTest(TestCase):
                 await controller.connect(cls.controller_name)
             else:
                 await controller.connect_current()
+            log.info(f"Adding model {cls.model_name} on cloud {cls.cloud_name}")
             cls.model = await controller.add_model(
                 cls.model_name, cloud_name=cls.cloud_name
             )
@@ -152,6 +158,7 @@ class OperatorTest(TestCase):
         if not cls.keep_model:
             controller = await cls.model.get_controller()
             await cls.model.disconnect()
+            log.info(f"Destroying model {cls.model_name}")
             await controller.destroy_model(cls.model_name)
             await controller.disconnect()
         else:
@@ -169,6 +176,7 @@ class OperatorTest(TestCase):
         charm_abs = Path(charm_path).absolute()
         metadata_path = charm_path / "metadata.yaml"
         layer_path = charm_path / "layer.yaml"
+        charm_name = yaml.safe_load(metadata_path.read_text())["name"]
         if layer_path.exists():
             # Handle older, reactive framework charms.
             cmd = ["charm-build", "-F", str(charm_abs)]
@@ -181,6 +189,7 @@ class OperatorTest(TestCase):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        log.info(f"Building charm {charm_name}")
         stdout, stderr = await proc.communicate()
         stdout, stderr = stdout.decode("utf8"), stderr.decode("utf8")
 
@@ -195,7 +204,6 @@ class OperatorTest(TestCase):
                 f"Failed to build charm {charm_path}:\n{stderr}\n{stdout}"
             )
 
-        charm_name = yaml.safe_load(metadata_path.read_text())["name"]
         return self.tmp_path / f"{charm_name}.charm"
 
     async def build_charms(self, *charm_paths):
