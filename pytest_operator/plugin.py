@@ -69,7 +69,6 @@ def _cls_to_model_name(cls):
     def _decamelify(match):
         prefix = f"{match.group(1)}-" if match.group(1) else ""
         if match.group(3) and len(match.group(2)) > 1:
-            print(match.groups())
             return (
                 f"{prefix}{match.group(2)[:-1].lower()}-"
                 f"{match.group(2)[-1:].lower()}{match.group(3)}"
