@@ -1,10 +1,13 @@
 import asyncio
 import inspect
+import os
 import re
 import shutil
 import subprocess
+import sys
 import textwrap
 import logging
+from fnmatch import fnmatch
 from functools import wraps
 from pathlib import Path
 from random import choices
@@ -103,6 +106,7 @@ def inject_fixtures(request, tmp_path_factory):
     cls = request.cls
     cls.request = request
     cls.tmp_path = tmp_path_factory.mktemp(_cls_to_model_name(cls))
+    log.info(f"Using tmp_path: {cls.tmp_path}")
     cls.loop = asyncio.new_event_loop()
     asyncio.set_event_loop(cls.loop)
     cls.loop.run_until_complete(cls.setup_model())
@@ -156,6 +160,10 @@ class OperatorTest(TestCase):
             return
         if not cls.keep_model:
             controller = await cls.model.get_controller()
+            # Forcibly destroy machines in case any units are in error.
+            for machine in cls.model.machines.values():
+                log.info(f"Destroying machine {machine.id}")
+                await machine.destroy(force=True)
             await cls.model.disconnect()
             log.info(f"Destroying model {cls.model_name}")
             await controller.destroy_model(cls.model_name)
@@ -171,6 +179,8 @@ class OperatorTest(TestCase):
 
         Returns a Path for the built charm file.
         """
+        charms_dst_dir = self.tmp_path / "charms"
+        charms_dst_dir.mkdir(exist_ok=True)
         charm_path = Path(charm_path)
         charm_abs = Path(charm_path).absolute()
         metadata_path = charm_path / "metadata.yaml"
@@ -184,7 +194,7 @@ class OperatorTest(TestCase):
             cmd = ["charmcraft", "build", "-f", str(charm_abs)]
         proc = await asyncio.create_subprocess_exec(
             *cmd,
-            cwd=str(self.tmp_path),
+            cwd=str(charms_dst_dir),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -203,7 +213,7 @@ class OperatorTest(TestCase):
                 f"Failed to build charm {charm_path}:\n{stderr}\n{stdout}"
             )
 
-        return self.tmp_path / f"{charm_name}.charm"
+        return charms_dst_dir / f"{charm_name}.charm"
 
     async def build_charms(self, *charm_paths):
         """Builds one or more charms in parallel.
@@ -224,9 +234,13 @@ class OperatorTest(TestCase):
         This can be used to populate built charm paths or config values.
 
         :param bundle (str or Path): Path to bundle file or YAML content.
+        :param context (dict): Optional context mapping.
+        :param **kwcontext: Additional optional context as keyword args.
 
         Returns the Path for the rendered bundle.
         """
+        bundles_dst_dir = self.tmp_path / "bundles"
+        bundles_dst_dir.mkdir(exist_ok=True)
         if context is None:
             context = {}
         context.update(kwcontext)
@@ -241,17 +255,20 @@ class OperatorTest(TestCase):
             bundle_text = textwrap.dedent(bundle).strip()
             infix = "".join(choices(hexdigits, k=4))
             bundle_name = f"{self.model_name}-{infix}.yaml"
+        log.info(f"Rendering bundle {bundle_name}")
         rendered = jinja2.Template(bundle_text).render(**context)
-        dst = self.tmp_path / bundle_name
+        dst = bundles_dst_dir / bundle_name
         dst.write_text(rendered)
         return dst
 
     def render_bundles(self, *bundles, context=None, **kwcontext):
-        """Render one or more templated bundles using Jinja2 in parallel.
+        """Render one or more templated bundles using Jinja2.
 
         This can be used to populate built charm paths or config values.
 
-        :param bundles (list[str or Path]): List of bundle Paths or YAML contents.
+        :param *bundles (str or Path): One or more bundle Paths or YAML contents.
+        :param context (dict): Optional context mapping.
+        :param **kwcontext: Additional optional context as keyword args.
 
         Returns a list of Paths for the rendered bundles.
         """
@@ -259,4 +276,128 @@ class OperatorTest(TestCase):
         return [
             self.render_bundle(bundle_path, context=context, **kwcontext)
             for bundle_path in bundles
+        ]
+
+    async def build_lib(self, lib_path):
+        """Build a Python library (sdist) for use in a test.
+
+        Returns a Path for the built library archive file.
+        """
+        libs_dst_dir = self.tmp_path / "libs"
+        libs_dst_dir.mkdir(exist_ok=True)
+        lib_path_abs = Path(lib_path).absolute()
+
+        proc = await asyncio.create_subprocess_exec(
+            *(sys.executable, "setup.py", "--fullname"),
+            cwd=str(lib_path_abs),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        stdout, stderr = stdout.decode("utf8"), stderr.decode("utf8")
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"Failed to get library name {lib_path}:\n{stderr}\n{stdout}"
+            )
+        lib_name_ver = stdout.strip()
+        lib_dst_path = libs_dst_dir / f"{lib_name_ver}.tar.gz"
+
+        log.info(f"Building library {lib_path}")
+        proc = await asyncio.create_subprocess_exec(
+            *(sys.executable, "setup.py", "sdist", "-d", str(libs_dst_dir)),
+            cwd=str(lib_path_abs),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        stdout, stderr = stdout.decode("utf8"), stderr.decode("utf8")
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"Failed to build library {lib_path}:\n{stderr}\n{stdout}"
+            )
+
+        return lib_dst_path
+
+    def render_charm(
+        self, charm_path, include=None, exclude=None, context=None, **kwcontext
+    ):
+        """Render a templated charm using Jinja2.
+
+        This can be used to make certain files in a test charm templated, such
+        as a path to a library file that is built locally.
+
+        :param charm_path (str): Path to top-level directory of charm to render.
+        :include (list[str or Path]): Optional list of glob patterns or file paths
+            to pass through Jinja2, relative to base charm path. (default: all files
+            are passed through Jinja2)
+        :exclude (list[str or Path]): Optional list of glob patterns or file paths
+            to exclude from passing through Jinja2, relative to the base charm path.
+            (default: all files are passed through Jinja2)
+        :param context (dict): Optional context mapping.
+        :param **kwcontext: Additional optional context as keyword args.
+
+        Returns a Path for the rendered charm source directory.
+        """
+        if context is None:
+            context = {}
+        context.update(kwcontext)
+        charm_path = Path(charm_path)
+        charm_dst_path = self.tmp_path / "charms" / charm_path.name
+        log.info(f"Rendering charm {charm_path}")
+        shutil.copytree(
+            charm_path,
+            charm_dst_path,
+            ignore=shutil.ignore_patterns(".git", ".bzr", "__pycache__", "*.pyc"),
+        )
+        if include is None:
+            include = ["*"]
+        if exclude is None:
+            exclude = []
+
+        def _filter(root, node):
+            # Filter nodes based on whether they match include and don't match exclude.
+            rel_node = (Path(root) / node).relative_to(charm_dst_path)
+            if not any(fnmatch(rel_node, pat) for pat in include):
+                return False
+            if any(fnmatch(rel_node, pat) for pat in exclude):
+                return False
+            return True
+
+        for root, dirs, files in os.walk(charm_dst_path):
+            dirs[:] = [dn for dn in dirs if _filter(root, dn)]
+            files[:] = [fn for fn in files if _filter(root, fn)]
+            for file_name in files:
+                file_path = Path(root) / file_name
+                file_text = file_path.read_text()
+                rendered = jinja2.Template(file_text).render(**context)
+                file_path.write_text(rendered)
+
+        return charm_dst_path
+
+    def render_charms(
+        self, *charm_paths, include=None, exclude=None, context=None, **kwcontext
+    ):
+        """Render one or more templated charms using Jinja2.
+
+        This can be used to make certain files in a test charm templated, such
+        as a path to a library file that is built locally.
+
+        :param *charm_paths (str): Path to top-level directory of charm to render.
+        :include (list[str or Path]): Optional list of glob patterns or file paths
+            to pass through Jinja2, relative to base charm path. (default: all files
+            are passed through Jinja2)
+        :exclude (list[str or Path]): Optional list of glob patterns or file paths
+            to exclude from passing through Jinja2, relative to the base charm path.
+            (default: all files are passed through Jinja2)
+        :param context (dict): Optional context mapping.
+        :param **kwcontext: Additional optional context as keyword args.
+
+        Returns a list of Paths for the rendered charm source directories.
+        """
+        # Jinja2 does support async, but rendering individual files should be
+        # relatively quick, meaning this will end up blocking on the IO from
+        # os.walk() and Path.read/write_text() most of the time anyway.
+        return [
+            self.render_charm(charm_path, include, exclude, context, **kwcontext)
+            for charm_path in charm_paths
         ]

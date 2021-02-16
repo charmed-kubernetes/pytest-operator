@@ -1,1 +1,2 @@
 ops
+file://{{ pytest_operator }}#egg=pytest_operator
