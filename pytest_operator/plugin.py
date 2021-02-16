@@ -162,7 +162,7 @@ class OperatorTest(TestCase):
             controller = await cls.model.get_controller()
             # Forcibly destroy machines in case any units are in error.
             for machine in cls.model.machines.values():
-                log.info(f"Destroying machine {cls.machine.id}")
+                log.info(f"Destroying machine {machine.id}")
                 await machine.destroy(force=True)
             await cls.model.disconnect()
             log.info(f"Destroying model {cls.model_name}")
