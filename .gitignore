@@ -4,3 +4,4 @@
 *.charm
 venv
 build
+dist/
