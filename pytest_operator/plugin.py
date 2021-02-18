@@ -53,6 +53,10 @@ def pytest_addoption(parser):
     )
 
 
+def pytest_configure(config):
+    config.addinivalue_line("markers", "abort_on_fail")
+
+
 @pytest.fixture(scope="session")
 def check_deps(autouse=True):
     missing = []
@@ -88,11 +92,28 @@ def _cls_to_model_name(cls):
     return re.sub(r"[^a-z0-9-]", "-", re.sub(camel_pat, _decamelify, full_name))
 
 
+def _item_for_func(cls, func):
+    for item in cls.request.session.items:
+        if item.function is func:
+            return item
+    else:
+        raise ValueError(f"Item not found for {func}")
+
+
 def _wrap_async_tests(cls):
     def _wrap_async(async_method):
         @wraps(async_method)
         def _run_async(*args, **kwargs):
-            return cls.loop.run_until_complete(async_method(*args, **kwargs))
+            if cls.aborted:
+                pytest.xfail("aborted")
+            item = _item_for_func(cls, async_method)
+            is_abort_on_fail = item.get_closest_marker("abort_on_fail")
+            try:
+                return cls.loop.run_until_complete(async_method(*args, **kwargs))
+            except Exception:
+                if is_abort_on_fail:
+                    cls.aborted = True
+                raise
 
         return _run_async
 
@@ -123,6 +144,9 @@ def inject_fixtures(request, tmp_path_factory):
 @pytest.mark.usefixtures("inject_fixtures")
 class OperatorTest(TestCase):
     """Base class for testing Operator Charms."""
+
+    # Flag indicating whether all subsequent tests should be aborted.
+    aborted = False
 
     # These will be injected by inject_fixtures.
     request = None
@@ -245,6 +269,20 @@ class OperatorTest(TestCase):
             await controller.disconnect()
         else:
             await cls.model.disconnect()
+
+    def abort(self, *args, **kwargs):
+        """Fail the current test method and mark all remaining test methods as xfail.
+
+        This can be used if a given step is required for subsequent steps to be
+        successful, such as the initial deployment.
+
+        Any args will be passed through to `pytest.fail()`.
+
+        You can also mark a test with `@pytest.marks.abort_on_fail` to have this
+        automatically applied if the marked test method fails or errors.
+        """
+        type(self).aborted = True
+        pytest.fail(*args, **kwargs)
 
     async def build_charm(self, charm_path):
         """Builds a single charm.

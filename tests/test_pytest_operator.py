@@ -1,6 +1,7 @@
 import logging
 from pathlib import Path
 
+import pytest
 from pytest_operator import OperatorTest
 
 
@@ -8,6 +9,7 @@ log = logging.getLogger(__name__)
 
 
 class PluginTest(OperatorTest):
+    @pytest.mark.abort_on_fail
     async def test_build_and_deploy(self):
         lib_path = Path(__file__).parent.parent
         pytest_operator = await self.build_lib(lib_path)
