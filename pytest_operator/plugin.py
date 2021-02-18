@@ -92,21 +92,13 @@ def _cls_to_model_name(cls):
     return re.sub(r"[^a-z0-9-]", "-", re.sub(camel_pat, _decamelify, full_name))
 
 
-def _item_for_func(cls, func):
-    for item in cls.request.session.items:
-        if item.function is func:
-            return item
-    else:
-        raise ValueError(f"Item not found for {func}")
-
-
 def _wrap_async_tests(cls):
     def _wrap_async(async_method):
         @wraps(async_method)
         def _run_async(*args, **kwargs):
             if cls.aborted:
                 pytest.xfail("aborted")
-            item = _item_for_func(cls, async_method)
+            item = cls._item_for_method(async_method)
             is_abort_on_fail = item.get_closest_marker("abort_on_fail")
             try:
                 return cls.loop.run_until_complete(async_method(*args, **kwargs))
@@ -159,9 +151,20 @@ class OperatorTest(TestCase):
     model = None
 
     @classmethod
-    async def _run(cls, cmd, cwd=None):
+    def _item_for_method(cls, method):
+        for item in cls.request.session.items:
+            function = getattr(item, "function", None)
+            if function is method:
+                return item
+            if getattr(function, "__wrapped__", None) is method:
+                return item
+        else:
+            raise ValueError(f"Item not found for {method}")
+
+    @classmethod
+    async def _run(cls, *cmd, cwd=None):
         proc = await asyncio.create_subprocess_exec(
-            *cmd,
+            *(str(c) for c in cmd),
             cwd=str(cwd or "."),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -233,16 +236,14 @@ class OperatorTest(TestCase):
 
         # TODO: Implement Model.debug_log in libjuju
         returncode, stdout, stderr = await cls._run(
-            (
-                "juju",
-                "debug-log",
-                "-m",
-                cls.model_full_name,
-                "--replay",
-                "--no-tail",
-                "--level",
-                "ERROR",
-            )
+            "juju",
+            "debug-log",
+            "-m",
+            cls.model_full_name,
+            "--replay",
+            "--no-tail",
+            "--level",
+            "ERROR",
         )
         if returncode != 0:
             log.error(f"Failed to get juju log:\n{stderr}\n{stdout}")
@@ -301,13 +302,13 @@ class OperatorTest(TestCase):
         charm_name = yaml.safe_load(metadata_path.read_text())["name"]
         if layer_path.exists():
             # Handle older, reactive framework charms.
-            cmd = ["charm-build", "-F", str(charm_abs)]
+            cmd = ["charm-build", "-F", charm_abs]
         else:
             # Handle newer, operator framework charms.
-            cmd = ["charmcraft", "build", "-f", str(charm_abs)]
+            cmd = ["charmcraft", "build", "-f", charm_abs]
 
         log.info(f"Building charm {charm_name}")
-        returncode, stdout, stderr = await self._run(cmd, charms_dst_dir)
+        returncode, stdout, stderr = await self._run(*cmd, cwd=charms_dst_dir)
 
         if not layer_path.exists():
             # Clean up build dir created by charmcraft.
@@ -395,7 +396,7 @@ class OperatorTest(TestCase):
         lib_path_abs = Path(lib_path).absolute()
 
         returncode, stdout, stderr = await self._run(
-            (sys.executable, "setup.py", "--fullname"), lib_path_abs
+            sys.executable, "setup.py", "--fullname", cwd=lib_path_abs
         )
         if returncode != 0:
             raise RuntimeError(
@@ -406,7 +407,7 @@ class OperatorTest(TestCase):
 
         log.info(f"Building library {lib_path}")
         returncode, stdout, stderr = await self._run(
-            (sys.executable, "setup.py", "sdist", "-d", str(libs_dst_dir)), lib_path_abs
+            sys.executable, "setup.py", "sdist", "-d", libs_dst_dir, cwd=lib_path_abs
         )
         if returncode != 0:
             raise RuntimeError(
