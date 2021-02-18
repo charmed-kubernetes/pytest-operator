@@ -22,9 +22,6 @@ jobs:
   integration-test:
     name: Integration test with LXD
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python: [3.6, 3.7, 3.8, 3.9]
     timeout-minutes: 40
     steps:
     - name: Check out code
@@ -32,7 +29,7 @@ jobs:
     - name: Setup Python
       uses: actions/setup-python@v2
       with:
-        python-version: ${{ matrix.python }}
+        python-version: 3.8
     - name: Setup operator test environment
       uses: charmed-kubernetes/actions-operator@master
     - name: Run test

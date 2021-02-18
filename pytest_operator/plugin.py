@@ -140,15 +140,18 @@ class OperatorTest(TestCase):
     # Flag indicating whether all subsequent tests should be aborted.
     aborted = False
 
-    # These will be injected by inject_fixtures.
+    # This will be injected by inject_fixtures.
     request = None
+    tmp_path = None
+    loop = None
+
+    # These will be set by setup_model
     cloud_name = None
     controller_name = None
     model_name = None
     model_full_name = None
-    tmp_path = None
-    loop = None
     model = None
+    jujudata = None
 
     @classmethod
     def _item_for_method(cls, method):
@@ -168,6 +171,7 @@ class OperatorTest(TestCase):
             cwd=str(cwd or "."),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=dict(os.environ, JUJU_DATA=cls.jujudata.path),
         )
         stdout, stderr = await proc.communicate()
         stdout, stderr = stdout.decode("utf8"), stderr.decode("utf8")
@@ -180,13 +184,9 @@ class OperatorTest(TestCase):
         cls.model_name = cls.request.config.getoption("--model")
         cls.keep_model = cls.request.config.getoption("--keep-models")
         # TODO: We won't need this if Model.debug_log is implemented in libjuju
-        jujudata = FileJujuData()
-        if {"HOME", "JUJU_DATA"}.isdisjoint(os.environ.keys()):
-            # Handle HOME not being in passenv. The Juju CLI relies on this, but
-            # FileJujuData is able to figure out the path anyway in most cases.
-            os.environ["JUJU_DATA"] = jujudata.path
+        cls.jujudata = FileJujuData()
         if not cls.controller_name:
-            cls.controller_name = jujudata.current_controller()
+            cls.controller_name = cls.jujudata.current_controller()
         if not cls.model_name:
             cls.model_name = _cls_to_model_name(cls)
             cls.model_full_name = f"{cls.controller_name}:{cls.model_name}"
@@ -235,6 +235,11 @@ class OperatorTest(TestCase):
         log.info(f"Model status:\n\n{status}")
 
         # TODO: Implement Model.debug_log in libjuju
+        # NB: This call to `juju models` is needed because libjuju's `add_model`
+        # doesn't update the models.yaml cache that `juju debug-logs` depends
+        # on. Calling `juju models` beforehand forces the CLI to update the
+        # cache from the controller.
+        await cls._run("juju", "models")
         returncode, stdout, stderr = await cls._run(
             "juju",
             "debug-log",
@@ -246,17 +251,15 @@ class OperatorTest(TestCase):
             "ERROR",
         )
         if returncode != 0:
-            log.error(f"Failed to get juju log:\n{stderr}\n{stdout}")
-        else:
-            log.info(f"Juju error logs:\n\n{stdout}")
+            raise RuntimeError(f"Failed to get error logs:\n{stderr}\n{stdout}")
+        log.info(f"Juju error logs:\n\n{stdout}")
 
     @classmethod
     async def cleanup_model(cls):
         if not cls.model:
             return
 
-        if cls.request.session.testsfailed:
-            await cls.dump_model()
+        await cls.dump_model()
 
         if not cls.keep_model:
             controller = await cls.model.get_controller()
