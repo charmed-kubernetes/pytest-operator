@@ -17,6 +17,7 @@ import jinja2
 import pytest
 import yaml
 
+from juju.client.jujudata import FileJujuData
 from juju.controller import Controller
 from juju.model import Model
 
@@ -50,6 +51,10 @@ def pytest_addoption(parser):
         action="store_true",
         help="Keep any automatically created models",
     )
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "abort_on_fail")
 
 
 @pytest.fixture(scope="session")
@@ -91,7 +96,16 @@ def _wrap_async_tests(cls):
     def _wrap_async(async_method):
         @wraps(async_method)
         def _run_async(*args, **kwargs):
-            return cls.loop.run_until_complete(async_method(*args, **kwargs))
+            if cls.aborted:
+                pytest.xfail("aborted")
+            item = cls._item_for_method(async_method)
+            is_abort_on_fail = item.get_closest_marker("abort_on_fail")
+            try:
+                return cls.loop.run_until_complete(async_method(*args, **kwargs))
+            except Exception:
+                if is_abort_on_fail:
+                    cls.aborted = True
+                raise
 
         return _run_async
 
@@ -123,41 +137,130 @@ def inject_fixtures(request, tmp_path_factory):
 class OperatorTest(TestCase):
     """Base class for testing Operator Charms."""
 
-    # These will be injected by inject_fixtures.
+    # Flag indicating whether all subsequent tests should be aborted.
+    aborted = False
+
+    # This will be injected by inject_fixtures.
     request = None
     tmp_path = None
     loop = None
+
+    # These will be set by setup_model
+    cloud_name = None
+    controller_name = None
+    model_name = None
+    model_full_name = None
     model = None
+    jujudata = None
+
+    @classmethod
+    def _item_for_method(cls, method):
+        for item in cls.request.session.items:
+            function = getattr(item, "function", None)
+            if function is method:
+                return item
+            if getattr(function, "__wrapped__", None) is method:
+                return item
+        else:
+            raise ValueError(f"Item not found for {method}")
+
+    @classmethod
+    async def _run(cls, *cmd, cwd=None):
+        proc = await asyncio.create_subprocess_exec(
+            *(str(c) for c in cmd),
+            cwd=str(cwd or "."),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=dict(os.environ, JUJU_DATA=cls.jujudata.path),
+        )
+        stdout, stderr = await proc.communicate()
+        stdout, stderr = stdout.decode("utf8"), stderr.decode("utf8")
+        return proc.returncode, stdout, stderr
 
     @classmethod
     async def setup_model(cls):
         cls.cloud_name = cls.request.config.getoption("--cloud")
         cls.controller_name = cls.request.config.getoption("--controller")
         cls.model_name = cls.request.config.getoption("--model")
+        cls.keep_model = cls.request.config.getoption("--keep-models")
+        # TODO: We won't need this if Model.debug_log is implemented in libjuju
+        cls.jujudata = FileJujuData()
+        if not cls.controller_name:
+            cls.controller_name = cls.jujudata.current_controller()
         if not cls.model_name:
             cls.model_name = _cls_to_model_name(cls)
+            cls.model_full_name = f"{cls.controller_name}:{cls.model_name}"
             controller = Controller()
-            if controller:
-                await controller.connect(cls.controller_name)
-            else:
-                await controller.connect_current()
-            log.info(f"Adding model {cls.model_name} on cloud {cls.cloud_name}")
+            await controller.connect(cls.controller_name)
+            on_cloud = f" on cloud {cls.cloud_name}" if cls.cloud_name else ""
+            log.info(f"Adding model {cls.model_full_name}{on_cloud}")
             cls.model = await controller.add_model(
                 cls.model_name, cloud_name=cls.cloud_name
             )
             await controller.disconnect()
-            cls.keep_model = cls.request.config.getoption("--keep-models")
         else:
-            if cls.controller_name:
-                cls.model_name = f"{cls.controller_name}:{cls.model_name}"
+            cls.model_full_name = f"{cls.controller_name}:{cls.model_name}"
+            log.info(f"Connecting to model {cls.model_full_name}")
             cls.model = Model()
-            await cls.model.connect(cls.model_name)
+            await cls.model.connect(cls.model_full_name)
             cls.keep_model = True  # don't cleanup models we didn't create
+
+    @classmethod
+    async def dump_model(cls):
+        if not (cls.model.units or cls.model.machines):
+            log.info("Model is empty")
+            return
+
+        unit_len = max(len(unit.name) for unit in cls.model.units.values()) + 1
+        unit_line = f"{{:{unit_len}}}  {{:7}}  {{:11}}  {{}}"
+        machine_line = "{:<7}  {:10}  {}"
+
+        status = [unit_line.format("Unit", "Machine", "Status", "Message")]
+        for unit in cls.model.units.values():
+            status.append(
+                unit_line.format(
+                    unit.name + ("*" if await unit.is_leader_from_status() else ""),
+                    unit.machine.id,
+                    unit.workload_status,
+                    unit.workload_status_message,
+                )
+            )
+        status.append("")
+        status.append(machine_line.format("Machine", "Series", "Status"))
+        for machine in cls.model.machines.values():
+            status.append(
+                machine_line.format(machine.id, machine.series, machine.status)
+            )
+        status = "\n".join(status)
+        log.info(f"Model status:\n\n{status}")
+
+        # TODO: Implement Model.debug_log in libjuju
+        # NB: This call to `juju models` is needed because libjuju's `add_model`
+        # doesn't update the models.yaml cache that `juju debug-logs` depends
+        # on. Calling `juju models` beforehand forces the CLI to update the
+        # cache from the controller.
+        await cls._run("juju", "models")
+        returncode, stdout, stderr = await cls._run(
+            "juju",
+            "debug-log",
+            "-m",
+            cls.model_full_name,
+            "--replay",
+            "--no-tail",
+            "--level",
+            "ERROR",
+        )
+        if returncode != 0:
+            raise RuntimeError(f"Failed to get error logs:\n{stderr}\n{stdout}")
+        log.info(f"Juju error logs:\n\n{stdout}")
 
     @classmethod
     async def cleanup_model(cls):
         if not cls.model:
             return
+
+        await cls.dump_model()
+
         if not cls.keep_model:
             controller = await cls.model.get_controller()
             # Forcibly destroy machines in case any units are in error.
@@ -170,6 +273,20 @@ class OperatorTest(TestCase):
             await controller.disconnect()
         else:
             await cls.model.disconnect()
+
+    def abort(self, *args, **kwargs):
+        """Fail the current test method and mark all remaining test methods as xfail.
+
+        This can be used if a given step is required for subsequent steps to be
+        successful, such as the initial deployment.
+
+        Any args will be passed through to `pytest.fail()`.
+
+        You can also mark a test with `@pytest.marks.abort_on_fail` to have this
+        automatically applied if the marked test method fails or errors.
+        """
+        type(self).aborted = True
+        pytest.fail(*args, **kwargs)
 
     async def build_charm(self, charm_path):
         """Builds a single charm.
@@ -188,19 +305,13 @@ class OperatorTest(TestCase):
         charm_name = yaml.safe_load(metadata_path.read_text())["name"]
         if layer_path.exists():
             # Handle older, reactive framework charms.
-            cmd = ["charm-build", "-F", str(charm_abs)]
+            cmd = ["charm-build", "-F", charm_abs]
         else:
             # Handle newer, operator framework charms.
-            cmd = ["charmcraft", "build", "-f", str(charm_abs)]
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            cwd=str(charms_dst_dir),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+            cmd = ["charmcraft", "build", "-f", charm_abs]
+
         log.info(f"Building charm {charm_name}")
-        stdout, stderr = await proc.communicate()
-        stdout, stderr = stdout.decode("utf8"), stderr.decode("utf8")
+        returncode, stdout, stderr = await self._run(*cmd, cwd=charms_dst_dir)
 
         if not layer_path.exists():
             # Clean up build dir created by charmcraft.
@@ -208,7 +319,7 @@ class OperatorTest(TestCase):
             if build_path.exists():
                 shutil.rmtree(build_path)
 
-        if proc.returncode != 0:
+        if returncode != 0:
             raise RuntimeError(
                 f"Failed to build charm {charm_path}:\n{stderr}\n{stdout}"
             )
@@ -287,15 +398,10 @@ class OperatorTest(TestCase):
         libs_dst_dir.mkdir(exist_ok=True)
         lib_path_abs = Path(lib_path).absolute()
 
-        proc = await asyncio.create_subprocess_exec(
-            *(sys.executable, "setup.py", "--fullname"),
-            cwd=str(lib_path_abs),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        returncode, stdout, stderr = await self._run(
+            sys.executable, "setup.py", "--fullname", cwd=lib_path_abs
         )
-        stdout, stderr = await proc.communicate()
-        stdout, stderr = stdout.decode("utf8"), stderr.decode("utf8")
-        if proc.returncode != 0:
+        if returncode != 0:
             raise RuntimeError(
                 f"Failed to get library name {lib_path}:\n{stderr}\n{stdout}"
             )
@@ -303,15 +409,10 @@ class OperatorTest(TestCase):
         lib_dst_path = libs_dst_dir / f"{lib_name_ver}.tar.gz"
 
         log.info(f"Building library {lib_path}")
-        proc = await asyncio.create_subprocess_exec(
-            *(sys.executable, "setup.py", "sdist", "-d", str(libs_dst_dir)),
-            cwd=str(lib_path_abs),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        returncode, stdout, stderr = await self._run(
+            sys.executable, "setup.py", "sdist", "-d", libs_dst_dir, cwd=lib_path_abs
         )
-        stdout, stderr = await proc.communicate()
-        stdout, stderr = stdout.decode("utf8"), stderr.decode("utf8")
-        if proc.returncode != 0:
+        if returncode != 0:
             raise RuntimeError(
                 f"Failed to build library {lib_path}:\n{stderr}\n{stdout}"
             )
