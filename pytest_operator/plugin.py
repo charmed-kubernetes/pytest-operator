@@ -1,28 +1,26 @@
 import asyncio
 import inspect
+import logging
 import os
 import re
 import shutil
 import subprocess
 import sys
 import textwrap
-import logging
 from fnmatch import fnmatch
 from functools import wraps
 from pathlib import Path
 from random import choices
-from string import hexdigits, ascii_lowercase, digits
+from string import ascii_lowercase, digits, hexdigits
+from unittest import TestCase
 
 import jinja2
-import pytest
 import yaml
 
+import pytest
 from juju.client.jujudata import FileJujuData
 from juju.controller import Controller
 from juju.model import Model
-
-from unittest import TestCase
-
 
 log = logging.getLogger(__name__)
 
@@ -220,7 +218,7 @@ class OperatorTest(TestCase):
             status.append(
                 unit_line.format(
                     unit.name + ("*" if await unit.is_leader_from_status() else ""),
-                    unit.machine.id,
+                    unit.machine.id if unit.machine else "no-machine",
                     unit.workload_status,
                     unit.workload_status_message,
                 )
