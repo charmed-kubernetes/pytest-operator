@@ -8,16 +8,13 @@ import subprocess
 import sys
 import textwrap
 from fnmatch import fnmatch
-from functools import wraps
 from pathlib import Path
 from random import choices
 from string import ascii_lowercase, digits, hexdigits
-from unittest import TestCase
 
 import jinja2
-import yaml
-
 import pytest
+import yaml
 from juju.client.jujudata import FileJujuData
 from juju.controller import Controller
 from juju.model import Model
@@ -71,150 +68,138 @@ def check_deps(autouse=True):
         )
 
 
-def _cls_to_model_name(cls):
-    def _decamelify(match):
-        prefix = f"{match.group(1)}-" if match.group(1) else ""
-        if match.group(3) and len(match.group(2)) > 1:
-            return (
-                f"{prefix}{match.group(2)[:-1].lower()}-"
-                f"{match.group(2)[-1:].lower()}{match.group(3)}"
-            )
-        elif match.group(3):
-            return f"{prefix}{match.group(2).lower()}{match.group(3)}"
-        else:
-            return f"{prefix}{match.group(2).lower()}"
-
-    camel_pat = re.compile(r"([a-z]?)([A-Z]+)([a-z]?)")
-    suffix = "".join(choices(ascii_lowercase + digits, k=4))
-    full_name = f"{cls.__qualname__}-{suffix}"
-    return re.sub(r"[^a-z0-9-]", "-", re.sub(camel_pat, _decamelify, full_name))
+@pytest.fixture(scope="module")
+def event_loop():
+    """Create an instance of the default event loop for each test module."""
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    yield loop
+    loop.close()
 
 
-def _wrap_async_tests(cls):
-    def _wrap_async(async_method):
-        @wraps(async_method)
-        def _run_async(*args, **kwargs):
-            if cls.aborted:
-                pytest.xfail("aborted")
-            item = cls._item_for_method(async_method)
-            is_abort_on_fail = item.get_closest_marker("abort_on_fail")
-            try:
-                return cls.loop.run_until_complete(async_method(*args, **kwargs))
-            except Exception:
-                if is_abort_on_fail:
-                    cls.aborted = True
-                raise
-
-        return _run_async
-
-    for name, method in inspect.getmembers(cls, inspect.iscoroutinefunction):
-        if not name.startswith("test_"):
-            continue
-        setattr(cls, name, _wrap_async(method))
+def pytest_collection_modifyitems(session, config, items):
+    """Automatically apply the "asyncio" marker to any async test items."""
+    for item in items:
+        is_async = inspect.iscoroutinefunction(getattr(item, "function", None))
+        has_marker = item.get_closest_marker("asyncio")
+        if is_async and not has_marker:
+            item.add_marker("asyncio")
 
 
-@pytest.fixture(scope="class")
-def inject_fixtures(request, tmp_path_factory):
-    cls = request.cls
-    cls.request = request
-    cls.tmp_path = tmp_path_factory.mktemp(_cls_to_model_name(cls))
-    log.info(f"Using tmp_path: {cls.tmp_path}")
-    cls.loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(cls.loop)
-    cls.loop.run_until_complete(cls.setup_model())
+@pytest.hookimpl(tryfirst=True, hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Make test results available to fixture finalizers."""
+    # execute all other hooks to obtain the report object
+    outcome = yield
+    rep = outcome.get_result()
 
-    _wrap_async_tests(cls)
+    # set a report attribute for each phase of a call, which can
+    # be "setup", "call", "teardown"
+    setattr(item, "rep_" + rep.when, rep)
 
+    # set attribute which indicates fail / xfail in any phase
+    item.failed = getattr(item, "failed", False) or rep.failed
+    item.xfailed = getattr(item, "xfailed", False) or getattr(rep, "wasxfail", False)
+
+
+@pytest.fixture(autouse=True)
+def abort_on_fail(request, ops_test):
+    if ops_test.aborted:
+        pytest.xfail("aborted")
     yield
+    abort_on_fail = request.node.get_closest_marker("abort_on_fail")
+    failed = request.node.failed
+    if abort_on_fail and abort_on_fail.kwargs.get("abort_on_xfail", False):
+        failed = failed or request.node.xfailed
+    if failed and abort_on_fail:
+        ops_test.aborted = True
 
-    cls.loop.run_until_complete(cls.cleanup_model())
-    cls.loop.close()
+
+@pytest.fixture(scope="module")
+@pytest.mark.asyncio
+async def ops_test(request, tmp_path_factory):
+    ops_test = OpsTest(request, tmp_path_factory)
+    await ops_test._setup_model()
+    yield ops_test
+    await ops_test._cleanup_model()
 
 
-@pytest.mark.usefixtures("inject_fixtures")
-class OperatorTest(TestCase):
-    """Base class for testing Operator Charms."""
+class OpsTest:
+    """Utility class for testing Operator Charms."""
 
-    # Flag indicating whether all subsequent tests should be aborted.
-    aborted = False
+    def __init__(self, request, tmp_path_factory):
+        self.request = request
+        self.tmp_path = tmp_path_factory.mktemp(self.default_model_name)
+        log.info(f"Using tmp_path: {self.tmp_path}")
 
-    # This will be injected by inject_fixtures.
-    request = None
-    tmp_path = None
-    loop = None
+        # Flag indicating whether all subsequent tests should be aborted.
+        self.aborted = False
 
-    # These will be set by setup_model
-    cloud_name = None
-    controller_name = None
-    model_name = None
-    model_full_name = None
-    model = None
-    jujudata = None
+        # These may be modified by _setup_model
+        self.cloud_name = request.config.option.cloud
+        self.controller_name = request.config.option.controller
+        self.model_name = request.config.option.model
+        self.keep_model = request.config.option.keep_models
 
-    @classmethod
-    def _item_for_method(cls, method):
-        for item in cls.request.session.items:
-            function = getattr(item, "function", None)
-            if function is method:
-                return item
-            if getattr(function, "__wrapped__", None) is method:
-                return item
-        else:
-            raise ValueError(f"Item not found for {method}")
+        # These will be set by _setup_model
+        self.model_full_name = None
+        self.model = None
+        self.jujudata = None
 
-    @classmethod
-    async def _run(cls, *cmd, cwd=None):
+    @property
+    def default_model_name(self):
+        if not hasattr(self, "_default_model_name"):
+            module_name = self.request.module.__name__
+            suffix = "".join(choices(ascii_lowercase + digits, k=4))
+            self._default_model_name = f"{module_name.replace('_', '-')}-{suffix}"
+        return self._default_model_name
+
+    async def _run(self, *cmd, cwd=None):
         proc = await asyncio.create_subprocess_exec(
             *(str(c) for c in cmd),
             cwd=str(cwd or "."),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=dict(os.environ, JUJU_DATA=cls.jujudata.path),
+            env=dict(os.environ, JUJU_DATA=self.jujudata.path),
         )
         stdout, stderr = await proc.communicate()
         stdout, stderr = stdout.decode("utf8"), stderr.decode("utf8")
         return proc.returncode, stdout, stderr
 
-    @classmethod
-    async def setup_model(cls):
-        cls.cloud_name = cls.request.config.getoption("--cloud")
-        cls.controller_name = cls.request.config.getoption("--controller")
-        cls.model_name = cls.request.config.getoption("--model")
-        cls.keep_model = cls.request.config.getoption("--keep-models")
+    async def _setup_model(self):
         # TODO: We won't need this if Model.debug_log is implemented in libjuju
-        cls.jujudata = FileJujuData()
-        if not cls.controller_name:
-            cls.controller_name = cls.jujudata.current_controller()
-        if not cls.model_name:
-            cls.model_name = _cls_to_model_name(cls)
-            cls.model_full_name = f"{cls.controller_name}:{cls.model_name}"
+        self.jujudata = FileJujuData()
+        if not self.controller_name:
+            self.controller_name = self.jujudata.current_controller()
+        if not self.model_name:
+            self.model_name = self.default_model_name
+            self.model_full_name = f"{self.controller_name}:{self.model_name}"
             controller = Controller()
-            await controller.connect(cls.controller_name)
-            on_cloud = f" on cloud {cls.cloud_name}" if cls.cloud_name else ""
-            log.info(f"Adding model {cls.model_full_name}{on_cloud}")
-            cls.model = await controller.add_model(
-                cls.model_name, cloud_name=cls.cloud_name
+            await controller.connect(self.controller_name)
+            on_cloud = f" on cloud {self.cloud_name}" if self.cloud_name else ""
+            log.info(f"Adding model {self.model_full_name}{on_cloud}")
+            self.model = await controller.add_model(
+                self.model_name, cloud_name=self.cloud_name
             )
             await controller.disconnect()
         else:
-            cls.model_full_name = f"{cls.controller_name}:{cls.model_name}"
-            log.info(f"Connecting to model {cls.model_full_name}")
-            cls.model = Model()
-            await cls.model.connect(cls.model_full_name)
-            cls.keep_model = True  # don't cleanup models we didn't create
+            self.model_full_name = f"{self.controller_name}:{self.model_name}"
+            log.info(f"Connecting to model {self.model_full_name}")
+            self.model = Model()
+            await self.model.connect(self.model_full_name)
+            self.keep_model = True  # don't cleanup models we didn't create
 
-    @classmethod
-    async def dump_model(cls):
-        if not (cls.model.units or cls.model.machines):
+    async def dump_model(self):
+        """Dump the status of the model."""
+        if not (self.model.units or self.model.machines):
             log.info("Model is empty")
             return
 
-        unit_len = max(len(unit.name) for unit in cls.model.units.values()) + 1
+        unit_len = max(len(unit.name) for unit in self.model.units.values()) + 1
         unit_line = f"{{:{unit_len}}}  {{:7}}  {{:11}}  {{}}"
         machine_line = "{:<7}  {:10}  {}"
 
         status = [unit_line.format("Unit", "Machine", "Status", "Message")]
-        for unit in cls.model.units.values():
+        for unit in self.model.units.values():
             status.append(
                 unit_line.format(
                     unit.name + ("*" if await unit.is_leader_from_status() else ""),
@@ -225,7 +210,7 @@ class OperatorTest(TestCase):
             )
         status.append("")
         status.append(machine_line.format("Machine", "Series", "Status"))
-        for machine in cls.model.machines.values():
+        for machine in self.model.machines.values():
             status.append(
                 machine_line.format(machine.id, machine.series, machine.status)
             )
@@ -237,12 +222,12 @@ class OperatorTest(TestCase):
         # doesn't update the models.yaml cache that `juju debug-logs` depends
         # on. Calling `juju models` beforehand forces the CLI to update the
         # cache from the controller.
-        await cls._run("juju", "models")
-        returncode, stdout, stderr = await cls._run(
+        await self._run("juju", "models")
+        returncode, stdout, stderr = await self._run(
             "juju",
             "debug-log",
             "-m",
-            cls.model_full_name,
+            self.model_full_name,
             "--replay",
             "--no-tail",
             "--level",
@@ -252,25 +237,24 @@ class OperatorTest(TestCase):
             raise RuntimeError(f"Failed to get error logs:\n{stderr}\n{stdout}")
         log.info(f"Juju error logs:\n\n{stdout}")
 
-    @classmethod
-    async def cleanup_model(cls):
-        if not cls.model:
+    async def _cleanup_model(self):
+        if not self.model:
             return
 
-        await cls.dump_model()
+        await self.dump_model()
 
-        if not cls.keep_model:
-            controller = await cls.model.get_controller()
+        if not self.keep_model:
+            controller = await self.model.get_controller()
             # Forcibly destroy machines in case any units are in error.
-            for machine in cls.model.machines.values():
+            for machine in self.model.machines.values():
                 log.info(f"Destroying machine {machine.id}")
                 await machine.destroy(force=True)
-            await cls.model.disconnect()
-            log.info(f"Destroying model {cls.model_name}")
-            await controller.destroy_model(cls.model_name)
+            await self.model.disconnect()
+            log.info(f"Destroying model {self.model_name}")
+            await controller.destroy_model(self.model_name)
             await controller.disconnect()
         else:
-            await cls.model.disconnect()
+            await self.model.disconnect()
 
     def abort(self, *args, **kwargs):
         """Fail the current test method and mark all remaining test methods as xfail.
@@ -283,7 +267,7 @@ class OperatorTest(TestCase):
         You can also mark a test with `@pytest.marks.abort_on_fail` to have this
         automatically applied if the marked test method fails or errors.
         """
-        type(self).aborted = True
+        self.aborted = True
         pytest.fail(*args, **kwargs)
 
     async def build_charm(self, charm_path):

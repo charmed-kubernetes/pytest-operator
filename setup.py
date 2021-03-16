@@ -27,6 +27,7 @@ setup(
     install_requires=[
         "ipdb",
         "pytest",
+        "pytest-asyncio",
         "pyyaml",
         "juju",
         "charm-tools",
