@@ -4,8 +4,8 @@
 from setuptools import setup, find_packages
 
 setup(
-    author="Adam Stokes",
-    author_email="adam.stokes@ubuntu.com",
+    author="Cory Johns",
+    author_email="cory.johns@canonical.com",
     description="Fixtures for Operators",
     long_description="Fixtures for Operators",
     classifiers=[
@@ -22,7 +22,7 @@ setup(
     name="pytest-operator",
     packages=find_packages(include=["pytest_operator"]),
     url="https://github.com/charmed-kubernetes/pytest-operator",
-    version="0.5.1",
+    version="0.6.0",
     zip_safe=True,
     install_requires=[
         "ipdb",
