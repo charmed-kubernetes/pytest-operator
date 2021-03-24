@@ -14,6 +14,7 @@ from string import ascii_lowercase, digits, hexdigits
 
 import jinja2
 import pytest
+import pytest_asyncio.plugin
 import yaml
 from juju.client.jujudata import FileJujuData
 from juju.controller import Controller
@@ -74,6 +75,10 @@ def event_loop():
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
     loop.close()
+
+
+# Plugin load order can't be set, replace asyncio directly
+pytest_asyncio.plugin.event_loop = event_loop
 
 
 def pytest_collection_modifyitems(session, config, items):
