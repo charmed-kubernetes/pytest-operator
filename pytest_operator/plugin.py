@@ -158,7 +158,11 @@ class OpsTest:
             self._default_model_name = f"{module_name.replace('_', '-')}-{suffix}"
         return self._default_model_name
 
-    async def _run(self, *cmd, cwd=None):
+    async def run(self, *cmd, cwd=None):
+        """Asynchronously run a command.
+
+        Returns a tuple of the return code, stdout, and stderr (decoded as utf8).
+        """
         proc = await asyncio.create_subprocess_exec(
             *(str(c) for c in cmd),
             cwd=str(cwd or "."),
@@ -169,6 +173,8 @@ class OpsTest:
         stdout, stderr = await proc.communicate()
         stdout, stderr = stdout.decode("utf8"), stderr.decode("utf8")
         return proc.returncode, stdout, stderr
+
+    _run = run  # backward compatibility alias
 
     async def _setup_model(self):
         # TODO: We won't need this if Model.debug_log is implemented in libjuju
@@ -227,8 +233,8 @@ class OpsTest:
         # doesn't update the models.yaml cache that `juju debug-logs` depends
         # on. Calling `juju models` beforehand forces the CLI to update the
         # cache from the controller.
-        await self._run("juju", "models")
-        returncode, stdout, stderr = await self._run(
+        await self.run("juju", "models")
+        returncode, stdout, stderr = await self.run(
             "juju",
             "debug-log",
             "-m",
@@ -298,7 +304,7 @@ class OpsTest:
             cmd = ["charmcraft", "build", "-f", charm_abs]
 
         log.info(f"Building charm {charm_name}")
-        returncode, stdout, stderr = await self._run(*cmd, cwd=charms_dst_dir)
+        returncode, stdout, stderr = await self.run(*cmd, cwd=charms_dst_dir)
 
         if not layer_path.exists():
             # Clean up build dir created by charmcraft.
@@ -385,7 +391,7 @@ class OpsTest:
         libs_dst_dir.mkdir(exist_ok=True)
         lib_path_abs = Path(lib_path).absolute()
 
-        returncode, stdout, stderr = await self._run(
+        returncode, stdout, stderr = await self.run(
             sys.executable, "setup.py", "--fullname", cwd=lib_path_abs
         )
         if returncode != 0:
@@ -396,7 +402,7 @@ class OpsTest:
         lib_dst_path = libs_dst_dir / f"{lib_name_ver}.tar.gz"
 
         log.info(f"Building library {lib_path}")
-        returncode, stdout, stderr = await self._run(
+        returncode, stdout, stderr = await self.run(
             sys.executable, "setup.py", "sdist", "-d", libs_dst_dir, cwd=lib_path_abs
         )
         if returncode != 0:
