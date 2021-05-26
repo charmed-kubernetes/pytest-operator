@@ -174,6 +174,8 @@ class OpsTest:
         stdout, stderr = stdout.decode("utf8"), stderr.decode("utf8")
         return proc.returncode, stdout, stderr
 
+    _run = run  # backward compatibility alias
+
     async def _setup_model(self):
         # TODO: We won't need this if Model.debug_log is implemented in libjuju
         self.jujudata = FileJujuData()
