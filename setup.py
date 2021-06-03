@@ -22,7 +22,7 @@ setup(
     name="pytest-operator",
     packages=find_packages(include=["pytest_operator"]),
     url="https://github.com/charmed-kubernetes/pytest-operator",
-    version="0.6.1",
+    version="0.7.0",
     zip_safe=True,
     install_requires=[
         "ipdb",
