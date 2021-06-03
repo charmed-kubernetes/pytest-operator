@@ -51,12 +51,29 @@ def pytest_addoption(parser):
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "abort_on_fail")
+    # These need to be fixed in libjuju and just clutter things up for tests using this.
+    config.addinivalue_line(
+        "filterwarnings", "ignore:The loop argument:DeprecationWarning"
+    )
+    config.addinivalue_line(
+        "filterwarnings", r"ignore:'with \(yield from lock\)':DeprecationWarning"
+    )
 
 
 @pytest.fixture(scope="session")
-def check_deps(autouse=True):
+def tmp_path_factory(request):
+    # Override temp path factory to create temp dirs under Tox env so that
+    # confined snaps (e.g., charmcraft) can access them.
+    return pytest.TempPathFactory(
+        given_basetemp=Path(os.environ["TOX_ENV_DIR"]) / "tmp" / "pytest",
+        trace=request.config.trace.get("tmpdir"),
+        _ispytest=True,
+    )
+
+
+def check_deps():
     missing = []
-    for dep in ("juju", "charm-build", "charmcraft"):
+    for dep in ("juju", "charm", "charmcraft"):
         res = subprocess.run(["which", dep])
         if res.returncode != 0:
             missing.append(dep)
@@ -122,6 +139,7 @@ def abort_on_fail(request, ops_test):
 @pytest.fixture(scope="module")
 @pytest.mark.asyncio
 async def ops_test(request, tmp_path_factory):
+    check_deps()
     ops_test = OpsTest(request, tmp_path_factory)
     await ops_test._setup_model()
     yield ops_test
@@ -255,7 +273,8 @@ class OpsTest:
         await self.dump_model()
 
         if not self.keep_model:
-            controller = await self.model.get_controller()
+            controller = Controller()
+            await controller.connect(self.controller_name)
             # Forcibly destroy machines in case any units are in error.
             for machine in self.model.machines.values():
                 log.info(f"Destroying machine {machine.id}")
@@ -298,7 +317,7 @@ class OpsTest:
         charm_name = yaml.safe_load(metadata_path.read_text())["name"]
         if layer_path.exists():
             # Handle older, reactive framework charms.
-            cmd = ["charm-build", "-F", charm_abs]
+            cmd = ["charm", "build", "-F", charm_abs]
         else:
             # Handle newer, operator framework charms.
             cmd = ["charmcraft", "build", "-f", charm_abs]

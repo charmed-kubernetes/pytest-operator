@@ -1,4 +1,5 @@
 import logging
+import os
 from pathlib import Path
 
 import pytest
@@ -54,6 +55,11 @@ class TestPlugin:
 
 async def test_func(ops_test):
     assert ops_test.model
+
+
+def test_tmp_path(ops_test):
+    tox_env_dir = Path(os.environ["TOX_ENV_DIR"]).resolve()
+    assert ops_test.tmp_path.relative_to(tox_env_dir)
 
 
 @pytest.mark.abort_on_fail(abort_on_xfail=True)

@@ -30,8 +30,6 @@ setup(
         "pytest-asyncio",
         "pyyaml",
         "juju",
-        "charm-tools",
-        "charmcraft",
         "jinja2",
     ],
     entry_points={
