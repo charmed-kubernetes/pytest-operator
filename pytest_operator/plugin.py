@@ -167,6 +167,7 @@ class OpsTest:
         self.model_full_name = None
         self.model = None
         self.jujudata = None
+        self._controller = None
 
     @property
     def default_model_name(self):
@@ -202,14 +203,13 @@ class OpsTest:
         if not self.model_name:
             self.model_name = self.default_model_name
             self.model_full_name = f"{self.controller_name}:{self.model_name}"
-            controller = Controller()
-            await controller.connect(self.controller_name)
+            self._controller = Controller()
+            await self._controller.connect(self.controller_name)
             on_cloud = f" on cloud {self.cloud_name}" if self.cloud_name else ""
             log.info(f"Adding model {self.model_full_name}{on_cloud}")
-            self.model = await controller.add_model(
+            self.model = await self._controller.add_model(
                 self.model_name, cloud_name=self.cloud_name
             )
-            await controller.disconnect()
         else:
             self.model_full_name = f"{self.controller_name}:{self.model_name}"
             log.info(f"Connecting to model {self.model_full_name}")
@@ -273,18 +273,17 @@ class OpsTest:
         await self.dump_model()
 
         if not self.keep_model:
-            controller = Controller()
-            await controller.connect(self.controller_name)
             # Forcibly destroy machines in case any units are in error.
             for machine in self.model.machines.values():
                 log.info(f"Destroying machine {machine.id}")
                 await machine.destroy(force=True)
             await self.model.disconnect()
             log.info(f"Destroying model {self.model_name}")
-            await controller.destroy_model(self.model_name)
-            await controller.disconnect()
+            await self._controller.destroy_model(self.model_name)
         else:
             await self.model.disconnect()
+        if self._controller:
+            await self._controller.disconnect()
 
     def abort(self, *args, **kwargs):
         """Fail the current test method and mark all remaining test methods as xfail.
