@@ -71,9 +71,9 @@ def tmp_path_factory(request):
     )
 
 
-def check_deps():
+def check_deps(*deps):
     missing = []
-    for dep in ("juju", "charm", "charmcraft"):
+    for dep in deps:
         res = subprocess.run(["which", dep])
         if res.returncode != 0:
             missing.append(dep)
@@ -139,7 +139,7 @@ def abort_on_fail(request, ops_test):
 @pytest.fixture(scope="module")
 @pytest.mark.asyncio
 async def ops_test(request, tmp_path_factory):
-    check_deps()
+    check_deps("juju", "charmcraft")
     ops_test = OpsTest(request, tmp_path_factory)
     await ops_test._setup_model()
     yield ops_test
@@ -316,6 +316,7 @@ class OpsTest:
         charm_name = yaml.safe_load(metadata_path.read_text())["name"]
         if layer_path.exists():
             # Handle older, reactive framework charms.
+            check_deps("charm")
             cmd = ["charm", "build", "-F", charm_abs]
         else:
             # Handle newer, operator framework charms.
