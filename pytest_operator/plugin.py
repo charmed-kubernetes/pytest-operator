@@ -196,7 +196,8 @@ class OpsTest:
         if check and proc.returncode != 0:
             if fail_msg is None:
                 fail_msg = f"Command {list(cmd)} failed"
-            raise AssertionError(f"{fail_msg} ({proc.returncode}): {stderr or stdout}")
+            raise AssertionError(f"{fail_msg} ({proc.returncode}): "
+                                 f"{(stderr or stdout).strip()}")
         return proc.returncode, stdout, stderr
 
     _run = run  # backward compatibility alias
