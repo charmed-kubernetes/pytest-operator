@@ -177,10 +177,12 @@ class OpsTest:
             self._default_model_name = f"{module_name.replace('_', '-')}-{suffix}"
         return self._default_model_name
 
-    async def run(self, *cmd, cwd=None):
+    async def run(self, *cmd, cwd=None, check=False, fail_msg=None):
         """Asynchronously run a command.
 
-        Returns a tuple of the return code, stdout, and stderr (decoded as utf8).
+        If `check` is False, returns a tuple of the return code, stdout, and
+        stderr (decoded as utf8). Otherwise, calls `pytest.fail` with
+        `fail_msg` and relevant command info.
         """
         proc = await asyncio.create_subprocess_exec(
             *(str(c) for c in cmd),
@@ -191,6 +193,10 @@ class OpsTest:
         )
         stdout, stderr = await proc.communicate()
         stdout, stderr = stdout.decode("utf8"), stderr.decode("utf8")
+        if check and proc.returncode != 0:
+            if fail_msg is None:
+                fail_msg = f"Command {list(cmd)} failed"
+            raise AssertionError(f"{fail_msg} ({proc.returncode}): {stderr or stdout}")
         return proc.returncode, stdout, stderr
 
     _run = run  # backward compatibility alias
