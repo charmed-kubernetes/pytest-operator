@@ -62,6 +62,17 @@ def test_tmp_path(ops_test):
     assert ops_test.tmp_path.relative_to(tox_env_dir)
 
 
+async def test_run(ops_test):
+    assert await ops_test.run("/bin/true") == (0, "", "")
+    assert await ops_test.run("/bin/false") == (1, "", "")
+    with pytest.raises(AssertionError) as exc_info:
+        await ops_test.run("/bin/false", check=True)
+    assert str(exc_info.value) == "Command ['/bin/false'] failed (1): "
+    with pytest.raises(AssertionError) as exc_info:
+        await ops_test.run("/bin/false", check=True, fail_msg="test")
+    assert str(exc_info.value) == "test (1): "
+
+
 @pytest.mark.abort_on_fail(abort_on_xfail=True)
 def test_abort():
     pytest.xfail("abort")
