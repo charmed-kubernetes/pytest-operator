@@ -40,3 +40,7 @@ async def test_build_and_deploy(ops_test):
 async def test_status(ops_test):
     assert ops_test.model.applications["my-charm"].units[0].workload_status == "active"
 ```
+
+## Reference
+
+More details can be found in [the reference docs](docs/reference.md).

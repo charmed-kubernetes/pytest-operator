@@ -178,7 +178,7 @@ class OpsTest:
         return self._default_model_name
 
     async def run(self, *cmd, cwd=None, check=False, fail_msg=None):
-        """Asynchronously run a command.
+        """Asynchronously run a subprocess command.
 
         If `check` is False, returns a tuple of the return code, stdout, and
         stderr (decoded as utf8). Otherwise, calls `pytest.fail` with
@@ -225,8 +225,8 @@ class OpsTest:
             await self.model.connect(self.model_full_name)
             self.keep_model = True  # don't cleanup models we didn't create
 
-    async def dump_model(self):
-        """Dump the status of the model."""
+    async def log_model(self):
+        """Log a summary of the status of the model."""
         if not (self.model.units or self.model.machines):
             log.info("Model is empty")
             return
@@ -278,7 +278,7 @@ class OpsTest:
         if not self.model:
             return
 
-        await self.dump_model()
+        await self.log_model()
 
         if not self.keep_model:
             # Forcibly destroy machines in case any units are in error.
