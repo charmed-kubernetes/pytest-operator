@@ -1,0 +1,11 @@
+loaders:
+  - type: python
+    modules:
+      - pytest_operator.plugin
+processors:
+  - type: filter
+  - type: smart
+  - type: crossref
+renderer:
+  type: markdown
+  filename: docs/index.md
