@@ -352,7 +352,7 @@ class OpsTest:
                 f"Failed to build charm {charm_path}:\n{stderr}\n{stdout}"
             )
 
-        return charms_dst_dir / f"{charm_name}*.charm"
+        return next(charms_dst_dir.glob(f"{charm_name}*.charm"))
 
     async def build_charms(self, *charm_paths):
         """Builds one or more charms in parallel.
@@ -365,7 +365,7 @@ class OpsTest:
         charms = await asyncio.gather(
             *(self.build_charm(charm_path) for charm_path in charm_paths)
         )
-        return {charm.stem: charm for charm in charms}
+        return {charm.stem.split("_")[0]: charm for charm in charms}
 
     def render_bundle(self, bundle, context=None, **kwcontext):
         """Render a templated bundle using Jinja2.
