@@ -352,7 +352,7 @@ class OpsTest:
                 f"Failed to build charm {charm_path}:\n{stderr}\n{stdout}"
             )
 
-        return charms_dst_dir / f"{charm_name}.charm"
+        return charms_dst_dir / f"{charm_name}*.charm"
 
     async def build_charms(self, *charm_paths):
         """Builds one or more charms in parallel.
@@ -455,6 +455,13 @@ class OpsTest:
         This can be used to make certain files in a test charm templated, such
         as a path to a library file that is built locally.
 
+        Note: Because charmcraft builds charms in a LXD container, any files
+        referenced by the charm will need to be relative to the charm directory.
+        To make this work as transparently as possible, any Path values in the
+        context will be copied into the rendered charm directory and the values
+        changed to point to that copy instead. This won't work if the file
+        reference is a string, or if it's under a nested data structure.
+
         :param charm_path (str): Path to top-level directory of charm to render.
         :include (list[str or Path]): Optional list of glob patterns or file paths
             to pass through Jinja2, relative to base charm path. (default: all files
@@ -467,8 +474,7 @@ class OpsTest:
 
         Returns a Path for the rendered charm source directory.
         """
-        if context is None:
-            context = {}
+        context = dict(context or {})  # make a copy, since we modify it
         context.update(kwcontext)
         charm_path = Path(charm_path)
         charm_dst_path = self.tmp_path / "charms" / charm_path.name
@@ -478,6 +484,20 @@ class OpsTest:
             charm_dst_path,
             ignore=shutil.ignore_patterns(".git", ".bzr", "__pycache__", "*.pyc"),
         )
+
+        suffix = "".join(choices(ascii_lowercase + digits, k=4))
+        files_path = charm_dst_path / f"_files_{suffix}"
+        files_path.mkdir()
+        for k, v in context.items():
+            if not isinstance(v, Path):
+                continue
+            # account for possibility of file name collisions
+            dst_dir = files_path / "".join(choices(ascii_lowercase + digits, k=4))
+            dst_dir.mkdir()
+            dst_path = dst_dir / v.name
+            shutil.copy2(v, dst_dir)
+            context[k] = Path("/root/project") / dst_path.relative_to(charm_dst_path)
+
         if include is None:
             include = ["*"]
         if exclude is None:
