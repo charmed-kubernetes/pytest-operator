@@ -340,6 +340,14 @@ class OpsTest:
                 shutil.rmtree(build_path)
 
         if returncode != 0:
+            m = re.search(
+                r"Failed to build charm.*full execution logs in '([^']+)'", stderr
+            )
+            if m:
+                try:
+                    stderr = Path(m.group(1)).read_text()
+                except FileNotFoundError:
+                    log.error(f"Failed to read full build log from {m.group(1)}")
             raise RuntimeError(
                 f"Failed to build charm {charm_path}:\n{stderr}\n{stdout}"
             )
