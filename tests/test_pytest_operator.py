@@ -22,7 +22,8 @@ class TestPlugin:
             },
         )
         req_path = charms[1] / "requirements.txt"
-        assert f"file://{pytest_operator}#egg=pytest_operator" in req_path.read_text()
+        req_text = req_path.read_text()
+        assert f"file://{pytest_operator}#egg=pytest_operator" not in req_text
         bundle = ops_test.render_bundle(
             # Normally, this would just be a filename like for the charms, rather
             # than an in-line YAML dump, but for visibility purposes in using this
