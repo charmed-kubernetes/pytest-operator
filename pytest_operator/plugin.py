@@ -328,7 +328,7 @@ class OpsTest:
             cmd = ["charm", "build", "-F", charm_abs]
         else:
             # Handle newer, operator framework charms.
-            cmd = ["charmcraft", "build", "-f", charm_abs]
+            cmd = ["sg", "lxd", "-c", f"charmcraft build -f {charm_abs}"]
 
         log.info(f"Building charm {charm_name}")
         returncode, stdout, stderr = await self.run(*cmd, cwd=charms_dst_dir)
