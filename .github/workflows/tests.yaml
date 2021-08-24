@@ -31,6 +31,6 @@ jobs:
       with:
         python-version: 3.8
     - name: Setup operator test environment
-      uses: charmed-kubernetes/actions-operator@master
+      uses: charmed-kubernetes/actions-operator@main
     - name: Run test
       run: tox -e py3
