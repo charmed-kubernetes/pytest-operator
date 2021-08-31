@@ -146,6 +146,10 @@ async def ops_test(request, tmp_path_factory):
     await ops_test._cleanup_model()
 
 
+def handle_file_delete_error(function, path, execinfo):
+    log.warn(f"Failed to delete '{path}' due to {execinfo[1]}")
+
+
 class OpsTest:
     """Utility class for testing Operator Charms."""
 
@@ -337,7 +341,7 @@ class OpsTest:
             # Clean up build dir created by charmcraft.
             build_path = charm_path / "build"
             if build_path.exists():
-                shutil.rmtree(build_path)
+                shutil.rmtree(build_path, onerror=handle_file_delete_error)
 
         if returncode != 0:
             m = re.search(
