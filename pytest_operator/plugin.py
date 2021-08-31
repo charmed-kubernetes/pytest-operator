@@ -332,7 +332,7 @@ class OpsTest:
             cmd = ["charm", "build", "-F", charm_abs]
         else:
             # Handle newer, operator framework charms.
-            cmd = ["sg", "lxd", "-c", f"charmcraft build -f {charm_abs}"]
+            cmd = ["sg", "lxd", "-c", f"charmcraft pack -p {charm_abs}"]
 
         log.info(f"Building charm {charm_name}")
         returncode, stdout, stderr = await self.run(*cmd, cwd=charms_dst_dir)
@@ -341,6 +341,8 @@ class OpsTest:
             # Clean up build dir created by charmcraft.
             build_path = charm_path / "build"
             if build_path.exists():
+                # In some rare cases, some files under the created 'build' dir have
+                # odd permissions which interfer with cleanup; just log and continue.
                 shutil.rmtree(build_path, onerror=handle_file_delete_error)
 
         if returncode != 0:
