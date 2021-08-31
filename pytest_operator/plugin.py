@@ -329,13 +329,13 @@ class OpsTest:
         if layer_path.exists():
             # Handle older, reactive framework charms.
             check_deps("charm")
-            cmd = ["charm", "build", "-F", charm_abs]
+            cmd = ["charm", "build", "-F"]
         else:
             # Handle newer, operator framework charms.
-            cmd = ["sg", "lxd", "-c", f"charmcraft pack -p {charm_abs}"]
+            cmd = ["sg", "lxd", "-c", "charmcraft pack"]
 
         log.info(f"Building charm {charm_name}")
-        returncode, stdout, stderr = await self.run(*cmd, cwd=charms_dst_dir)
+        returncode, stdout, stderr = await self.run(*cmd, cwd=charm_abs)
 
         if not layer_path.exists():
             # Clean up build dir created by charmcraft.
@@ -358,7 +358,10 @@ class OpsTest:
                 f"Failed to build charm {charm_path}:\n{stderr}\n{stdout}"
             )
 
-        return next(charms_dst_dir.glob(f"{charm_name}*.charm"))
+        charm_file_src = next(charm_abs.glob(f"{charm_name}*.charm"))
+        charm_file_dst = charms_dst_dir / charm_file_src.name
+        charm_file_src.rename(charm_file_dst)
+        return charm_file_dst
 
     async def build_charms(self, *charm_paths):
         """Builds one or more charms in parallel.
