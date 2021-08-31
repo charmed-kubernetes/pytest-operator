@@ -329,7 +329,7 @@ class OpsTest:
         if layer_path.exists():
             # Handle older, reactive framework charms.
             check_deps("charm")
-            cmd = ["charm", "build", "-F"]
+            cmd = ["charm", "build", "--charm-file"]
         else:
             # Handle newer, operator framework charms.
             cmd = ["sg", "lxd", "-c", "charmcraft pack"]
