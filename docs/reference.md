@@ -117,6 +117,22 @@ A helper which builds multiple charms at once, in parallel.
 Returns a list of `pathlib.Path` instances for each charm, in the same order as the
 args.
 
+#### `async def build_bundle(self, bundle, output_bundle, destructive_mode, serial)`
+
+A helper which builds an entire bundle at once.
+
+Uses [juju-bundle][] to do the heavy lifting. Unlike `build_charm`, does not return a `pathlib.Path`
+for the resulting bundle.yaml, as the default is `built-bundle.yaml`, and can be overridden with the
+`output_bundle` argument.
+
+#### `async def deploy_bundle(self, bundle, build, destructive_mode, serial, extra_args)`
+
+A helper which deploys an entire bundle at once.
+
+Uses [juju-bundle][] to do the heavy lifting. Defaults to `build=True`, as it is most commonly used
+for building and deploying local bundles. For deploying straight from the charm store,
+`ops_test.model.deploy()` is preferred.
+
 #### `async def build_lib(self, lib_path)`
 
 Build a Python library (sdist), which can then be injected into a test charm's
@@ -195,3 +211,5 @@ applied if the marked test method fails or errors.
 
 Log a summary of the status of the model. This is automatically called before the model
 is cleaned up.
+
+[juju-bundle]: https://snapcraft.io/juju-bundle

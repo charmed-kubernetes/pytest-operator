@@ -11,6 +11,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from random import choices
 from string import ascii_lowercase, digits, hexdigits
+from typing import Optional, Iterable
 
 import jinja2
 import pytest
@@ -375,6 +376,47 @@ class OpsTest:
             *(self.build_charm(charm_path) for charm_path in charm_paths)
         )
         return {charm.stem.split("_")[0]: charm for charm in charms}
+
+    async def build_bundle(
+        self,
+        bundle: Optional[str] = None,
+        output_bundle: Optional[str] = None,
+        destructive_mode: bool = False,
+        serial: bool = False,
+    ):
+        """Builds bundle using juju-bundle build."""
+        cmd = ["juju-bundle", "build"]
+        if bundle is not None:
+            cmd += ["--bundle", bundle]
+        if output_bundle is not None:
+            cmd += ["--output-bundle", output_bundle]
+        if destructive_mode:
+            cmd += ["--destructive-mode"]
+        if serial:
+            cmd += ["--serial"]
+        await self.run(*cmd, check=True)
+
+    async def deploy_bundle(
+        self,
+        bundle: Optional[str] = None,
+        build: bool = True,
+        destructive_mode: bool = False,
+        serial: bool = False,
+        extra_args: Iterable[str] = (),
+    ):
+        """Deploys bundle using juju-bundle deploy."""
+        cmd = ["juju-bundle", "deploy"]
+        if bundle is not None:
+            cmd += ["--bundle", bundle]
+        if build:
+            cmd += ["--build"]
+        if destructive_mode:
+            cmd += ["--destructive-mode"]
+        if serial:
+            cmd += ["--serial"]
+
+        cmd += ["--", "-m", self.model_name] + list(extra_args)
+        await self.run(*cmd, check=True)
 
     def render_bundle(self, bundle, context=None, **kwcontext):
         """Render a templated bundle using Jinja2.
