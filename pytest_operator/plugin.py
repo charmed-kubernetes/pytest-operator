@@ -130,7 +130,7 @@ def abort_on_fail(request, ops_test):
         pytest.xfail("aborted")
     yield
     abort_on_fail = request.node.get_closest_marker("abort_on_fail")
-    failed = request.node.failed
+    failed = getattr(request.node, "failed", False)
     if abort_on_fail and abort_on_fail.kwargs.get("abort_on_xfail", False):
         failed = failed or request.node.xfailed
     if failed and abort_on_fail:
