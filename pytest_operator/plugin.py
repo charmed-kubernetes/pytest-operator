@@ -11,7 +11,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from random import choices
 from string import ascii_lowercase, digits, hexdigits
-from typing import Optional, Iterable
+from typing import Iterable, Optional
 
 import jinja2
 import pytest
@@ -130,7 +130,7 @@ def abort_on_fail(request, ops_test):
         pytest.xfail("aborted")
     yield
     abort_on_fail = request.node.get_closest_marker("abort_on_fail")
-    failed = request.node.failed
+    failed = getattr(request.node, "failed", False)
     if abort_on_fail and abort_on_fail.kwargs.get("abort_on_xfail", False):
         failed = failed or request.node.xfailed
     if failed and abort_on_fail:
@@ -194,7 +194,11 @@ class OpsTest:
             cwd=str(cwd or "."),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=dict(os.environ, JUJU_DATA=self.jujudata.path),
+            env={
+                **os.environ,
+                "JUJU_DATA": self.jujudata.path,
+                "JUJU_MODEL": self.model_full_name,
+            },
         )
         stdout, stderr = await proc.communicate()
         stdout, stderr = stdout.decode("utf8"), stderr.decode("utf8")
@@ -207,6 +211,15 @@ class OpsTest:
         return proc.returncode, stdout, stderr
 
     _run = run  # backward compatibility alias
+
+    async def juju(self, *args):
+        """Runs a Juju CLI command.
+
+        Useful for cases where python-libjuju sees things differently than the Juju CLI.
+        Will set `JUJU_MODEL`, so manually passing in `-m model-name` is unnecessary.
+        """
+
+        return await self.run("juju", *args, check=True)
 
     async def _setup_model(self):
         # TODO: We won't need this if Model.debug_log is implemented in libjuju

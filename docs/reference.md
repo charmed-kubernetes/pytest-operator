@@ -195,6 +195,14 @@ If `check` is False, returns a tuple of the return code, stdout, and stderr (dec
 utf8). Otherwise, calls `pytest.fail` with `fail_msg` (if given) and relevant command
 info.
 
+#### `async def juju(self, *args)`
+
+Runs a Juju CLI command.
+
+Useful for cases where python-libjuju sees things differently than the Juju CLI. Will set
+`JUJU_MODEL`, so manually passing in `-m model-name` is unnecessary.
+
+
 #### `def abort(self, *args, **kwargs)`
 
 Fail the current test method and mark all remaining test methods as xfail.
