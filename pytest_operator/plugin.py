@@ -212,14 +212,14 @@ class OpsTest:
 
     _run = run  # backward compatibility alias
 
-    async def juju(self, *args, check=True):
+    async def juju(self, *args):
         """Runs a Juju CLI command.
 
         Useful for cases where python-libjuju sees things differently than the Juju CLI.
         Will set `JUJU_MODEL`, so manually passing in `-m model-name` is unnecessary.
         """
 
-        return await self.run("juju", *args, check=check)
+        return await self.run("juju", *args)
 
     async def _setup_model(self):
         # TODO: We won't need this if Model.debug_log is implemented in libjuju
@@ -238,8 +238,9 @@ class OpsTest:
             )
             # NB: This call to `juju models` is needed because libjuju's
             # `add_model` doesn't update the models.yaml cache that the Juju
-            # CLI depends on. Calling `juju models` beforehand forces the CLI
-            # to update the cache from the controller.
+            # CLI depends on with the model's UUID, which the CLI requires to
+            # connect. Calling `juju models` beforehand forces the CLI to
+            # update the cache from the controller.
             await self.juju("models")
         else:
             self.model_full_name = f"{self.controller_name}:{self.model_name}"
