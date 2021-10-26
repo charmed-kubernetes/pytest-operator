@@ -177,7 +177,7 @@ class OpsTest:
     @property
     def default_model_name(self):
         if not hasattr(self, "_default_model_name"):
-            module_name = self.request.module.__name__
+            module_name = self.request.module.__name__.rpartition(".")[-1]
             suffix = "".join(choices(ascii_lowercase + digits, k=4))
             self._default_model_name = f"{module_name.replace('_', '-')}-{suffix}"
         return self._default_model_name
