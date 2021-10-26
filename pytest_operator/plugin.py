@@ -219,7 +219,7 @@ class OpsTest:
         Will set `JUJU_MODEL`, so manually passing in `-m model-name` is unnecessary.
         """
 
-        return await self.run("juju", *args, check=True)
+        return await self.run("juju", *args)
 
     async def _setup_model(self):
         # TODO: We won't need this if Model.debug_log is implemented in libjuju
@@ -236,6 +236,12 @@ class OpsTest:
             self.model = await self._controller.add_model(
                 self.model_name, cloud_name=self.cloud_name
             )
+            # NB: This call to `juju models` is needed because libjuju's
+            # `add_model` doesn't update the models.yaml cache that the Juju
+            # CLI depends on with the model's UUID, which the CLI requires to
+            # connect. Calling `juju models` beforehand forces the CLI to
+            # update the cache from the controller.
+            await self.juju("models")
         else:
             self.model_full_name = f"{self.controller_name}:{self.model_name}"
             log.info(f"Connecting to model {self.model_full_name}")
@@ -245,51 +251,14 @@ class OpsTest:
 
     async def log_model(self):
         """Log a summary of the status of the model."""
-        if not (self.model.units or self.model.machines):
-            log.info("Model is empty")
-            return
-
-        unit_len = max(len(unit.name) for unit in self.model.units.values()) + 1
-        unit_line = f"{{:{unit_len}}}  {{:7}}  {{:11}}  {{}}"
-        machine_line = "{:<7}  {:10}  {}"
-
-        status = [unit_line.format("Unit", "Machine", "Status", "Message")]
-        for unit in self.model.units.values():
-            status.append(
-                unit_line.format(
-                    unit.name + ("*" if await unit.is_leader_from_status() else ""),
-                    unit.machine.id if unit.machine else "no-machine",
-                    unit.workload_status,
-                    unit.workload_status_message,
-                )
-            )
-        status.append("")
-        status.append(machine_line.format("Machine", "Series", "Status"))
-        for machine in self.model.machines.values():
-            status.append(
-                machine_line.format(machine.id, machine.series, machine.status)
-            )
-        status = "\n".join(status)
-        log.info(f"Model status:\n\n{status}")
+        # TODO: Implement a pretty model status in libjuju
+        _, stdout, _ = await self.juju("status")
+        log.info(f"Model status:\n\n{stdout}")
 
         # TODO: Implement Model.debug_log in libjuju
-        # NB: This call to `juju models` is needed because libjuju's `add_model`
-        # doesn't update the models.yaml cache that `juju debug-logs` depends
-        # on. Calling `juju models` beforehand forces the CLI to update the
-        # cache from the controller.
-        await self.run("juju", "models")
-        returncode, stdout, stderr = await self.run(
-            "juju",
-            "debug-log",
-            "-m",
-            self.model_full_name,
-            "--replay",
-            "--no-tail",
-            "--level",
-            "ERROR",
+        _, stdout, _ = await self.juju(
+            "debug-log", "--replay", "--no-tail", "--level", "ERROR"
         )
-        if returncode != 0:
-            raise RuntimeError(f"Failed to get error logs:\n{stderr}\n{stdout}")
         log.info(f"Juju error logs:\n\n{stdout}")
 
     async def _cleanup_model(self):
