@@ -251,12 +251,9 @@ class OpsTest:
 
     async def log_model(self):
         """Log a summary of the status of the model."""
-        if not (self.model.units or self.model.machines):
-            log.info("Model is empty")
-        else:
-            # TODO: Implement a pretty model status in libjuju
-            _, stdout, _ = await self.juju("status")
-            log.info(f"Model status:\n\n{stdout}")
+        # TODO: Implement a pretty model status in libjuju
+        _, stdout, _ = await self.juju("status")
+        log.info(f"Model status:\n\n{stdout}")
 
         # TODO: Implement Model.debug_log in libjuju
         _, stdout, _ = await self.juju(
