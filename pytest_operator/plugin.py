@@ -48,6 +48,12 @@ def pytest_addoption(parser):
         action="store_true",
         help="Keep any automatically created models",
     )
+    parser.addoption(
+        "--destructive-mode",
+        action="store_true",
+        help="Whether to run charmcraft in destructive mode "
+        "(as opposed to doing builds in lxc containers)",
+    )
 
 
 def pytest_configure(config):
@@ -161,6 +167,9 @@ class OpsTest:
 
         # Flag indicating whether all subsequent tests should be aborted.
         self.aborted = False
+
+        # Flag for using destructive mode or not for charm builds.
+        self.destructive_mode = request.config.option.destructive_mode
 
         # These may be modified by _setup_model
         self.cloud_name = request.config.option.cloud
@@ -316,6 +325,8 @@ class OpsTest:
         else:
             # Handle newer, operator framework charms.
             cmd = ["sg", "lxd", "-c", "charmcraft pack"]
+            if self.destructive_mode:
+                cmd.append("--destructive-mode")
 
         log.info(f"Building charm {charm_name}")
         returncode, stdout, stderr = await self.run(*cmd, cwd=charm_abs)
