@@ -326,7 +326,7 @@ class OpsTest:
             # Handle newer, operator framework charms.
             cmd = ["sg", "lxd", "-c", "charmcraft pack"]
             if self.destructive_mode:
-                cmd.append("--destructive-mode")
+                cmd[-1] += " --destructive-mode"
 
         log.info(f"Building charm {charm_name}")
         returncode, stdout, stderr = await self.run(*cmd, cwd=charm_abs)

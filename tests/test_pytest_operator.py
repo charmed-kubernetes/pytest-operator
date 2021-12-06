@@ -19,7 +19,7 @@ class TestPlugin:
             # We didn't actually build it
             assert str(e).startswith("Failed to build charm")
         assert mock_run.called
-        assert "--destructive-mode" not in mock_run.call_args[0]
+        assert mock_run.call_args[0][-1] == "charmcraft pack"
 
         mock_run.reset_mock()
         ops_test.destructive_mode = True
@@ -29,7 +29,7 @@ class TestPlugin:
             # We didn't actually build it
             assert str(e).startswith("Failed to build charm")
         assert mock_run.called
-        assert "--destructive-mode" in mock_run.call_args[0]
+        assert mock_run.call_args[0][-1] == "charmcraft pack --destructive-mode"
 
     @pytest.mark.abort_on_fail
     async def test_build_and_deploy(self, ops_test):
