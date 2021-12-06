@@ -1,6 +1,7 @@
 import logging
 import os
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -9,6 +10,27 @@ log = logging.getLogger(__name__)
 
 
 class TestPlugin:
+    async def test_destructive_mode(self, ops_test, monkeypatch):
+        mock_run = AsyncMock(return_value=(1, "", ""))
+        monkeypatch.setattr(ops_test, "run", mock_run)
+        try:
+            await ops_test.build_charm("tests/data/charms/operator-framework")
+        except RuntimeError as e:
+            # We didn't actually build it
+            assert str(e).startswith("Failed to build charm")
+        assert mock_run.called
+        assert "--destructive-mode" not in mock_run.call_args[0]
+
+        mock_run.reset_mock()
+        ops_test.destructive_mode = True
+        try:
+            await ops_test.build_charm("tests/data/charms/operator-framework")
+        except RuntimeError as e:
+            # We didn't actually build it
+            assert str(e).startswith("Failed to build charm")
+        assert mock_run.called
+        assert "--destructive-mode" in mock_run.call_args[0]
+
     @pytest.mark.abort_on_fail
     async def test_build_and_deploy(self, ops_test):
         lib_path = Path(__file__).parent.parent

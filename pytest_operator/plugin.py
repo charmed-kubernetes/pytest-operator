@@ -48,6 +48,12 @@ def pytest_addoption(parser):
         action="store_true",
         help="Keep any automatically created models",
     )
+    parser.addoption(
+        "--destructive-mode",
+        action="store_true",
+        help="Whether to run charmcraft in destructive mode "
+        "(as opposed to doing builds in lxc containers)",
+    )
 
 
 def pytest_configure(config):
@@ -161,6 +167,9 @@ class OpsTest:
 
         # Flag indicating whether all subsequent tests should be aborted.
         self.aborted = False
+
+        # Flag for using destructive mode or not for charm builds.
+        self.destructive_mode = request.config.option.destructive_mode
 
         # These may be modified by _setup_model
         self.cloud_name = request.config.option.cloud
@@ -316,6 +325,8 @@ class OpsTest:
         else:
             # Handle newer, operator framework charms.
             cmd = ["sg", "lxd", "-c", "charmcraft pack"]
+            if self.destructive_mode:
+                cmd.append("--destructive-mode")
 
         log.info(f"Building charm {charm_name}")
         returncode, stdout, stderr = await self.run(*cmd, cwd=charm_abs)
@@ -363,7 +374,6 @@ class OpsTest:
         self,
         bundle: Optional[str] = None,
         output_bundle: Optional[str] = None,
-        destructive_mode: bool = False,
         serial: bool = False,
     ):
         """Builds bundle using juju-bundle build."""
@@ -372,7 +382,7 @@ class OpsTest:
             cmd += ["--bundle", bundle]
         if output_bundle is not None:
             cmd += ["--output-bundle", output_bundle]
-        if destructive_mode:
+        if self.destructive_mode:
             cmd += ["--destructive-mode"]
         if serial:
             cmd += ["--serial"]
@@ -382,7 +392,6 @@ class OpsTest:
         self,
         bundle: Optional[str] = None,
         build: bool = True,
-        destructive_mode: bool = False,
         serial: bool = False,
         extra_args: Iterable[str] = (),
     ):
@@ -392,7 +401,7 @@ class OpsTest:
             cmd += ["--bundle", bundle]
         if build:
             cmd += ["--build"]
-        if destructive_mode:
+        if self.destructive_mode:
             cmd += ["--destructive-mode"]
         if serial:
             cmd += ["--serial"]
