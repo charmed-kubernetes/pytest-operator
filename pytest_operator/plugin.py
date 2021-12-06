@@ -374,7 +374,6 @@ class OpsTest:
         self,
         bundle: Optional[str] = None,
         output_bundle: Optional[str] = None,
-        destructive_mode: bool = False,
         serial: bool = False,
     ):
         """Builds bundle using juju-bundle build."""
@@ -383,7 +382,7 @@ class OpsTest:
             cmd += ["--bundle", bundle]
         if output_bundle is not None:
             cmd += ["--output-bundle", output_bundle]
-        if destructive_mode:
+        if self.destructive_mode:
             cmd += ["--destructive-mode"]
         if serial:
             cmd += ["--serial"]
@@ -393,7 +392,6 @@ class OpsTest:
         self,
         bundle: Optional[str] = None,
         build: bool = True,
-        destructive_mode: bool = False,
         serial: bool = False,
         extra_args: Iterable[str] = (),
     ):
@@ -403,7 +401,7 @@ class OpsTest:
             cmd += ["--bundle", bundle]
         if build:
             cmd += ["--build"]
-        if destructive_mode:
+        if self.destructive_mode:
             cmd += ["--destructive-mode"]
         if serial:
             cmd += ["--serial"]
