@@ -167,6 +167,7 @@ def handle_file_delete_error(function, path, execinfo):
 
 class OpsTest:
     """Utility class for testing Operator Charms."""
+
     _instance = None  # store instance so we can tell if it's been used yet
 
     def __init__(self, request, tmp_path_factory):
