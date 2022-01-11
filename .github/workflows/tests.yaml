@@ -19,6 +19,21 @@ jobs:
         pip install tox
     - name: Run lint
       run: tox -e lint
+  unit:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v2
+    - name: Setup Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.9
+    - name: Install Dependencies
+      run: |
+        pip install tox
+    - name: Run unit tests
+      run: tox -e unit
   integration-test:
     name: Integration test with LXD
     runs-on: ubuntu-latest
@@ -32,5 +47,5 @@ jobs:
         python-version: 3.8
     - name: Setup operator test environment
       uses: charmed-kubernetes/actions-operator@main
-    - name: Run test
-      run: tox -e py3
+    - name: Run integration tests
+      run: tox -e integration

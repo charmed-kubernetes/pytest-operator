@@ -1,4 +1,5 @@
 import asyncio
+import grp
 import inspect
 import logging
 import os
@@ -81,7 +82,7 @@ def tmp_path_factory(request):
 def check_deps(*deps):
     missing = []
     for dep in deps:
-        res = subprocess.run(["which", dep])
+        res = subprocess.run(["which", dep], capture_output=True)
         if res.returncode != 0:
             missing.append(dep)
     if missing:
@@ -131,7 +132,12 @@ def pytest_runtest_makereport(item, call):
 
 
 @pytest.fixture(autouse=True)
-def abort_on_fail(request, ops_test):
+def abort_on_fail(request):
+    if OpsTest._instance is None:
+        # If we don't have an ops_test already in play, this should be a no-op.
+        yield
+        return
+    ops_test = OpsTest._instance
     if ops_test.aborted:
         pytest.xfail("aborted")
     yield
@@ -149,7 +155,9 @@ async def ops_test(request, tmp_path_factory):
     check_deps("juju", "charmcraft")
     ops_test = OpsTest(request, tmp_path_factory)
     await ops_test._setup_model()
+    OpsTest._instance = ops_test
     yield ops_test
+    OpsTest._instance = None
     await ops_test._cleanup_model()
 
 
@@ -159,6 +167,8 @@ def handle_file_delete_error(function, path, execinfo):
 
 class OpsTest:
     """Utility class for testing Operator Charms."""
+
+    _instance = None  # store instance so we can tell if it's been used yet
 
     def __init__(self, request, tmp_path_factory):
         self.request = request
@@ -324,9 +334,22 @@ class OpsTest:
             cmd = ["charm", "build", "--charm-file"]
         else:
             # Handle newer, operator framework charms.
-            cmd = ["sg", "lxd", "-c", "charmcraft pack"]
+            all_groups = {g.gr_name for g in grp.getgrall()}
+            users_groups = {grp.getgrgid(g).gr_name for g in os.getgroups()}
             if self.destructive_mode:
-                cmd[-1] += " --destructive-mode"
+                # host builder never requires lxd group
+                cmd = ["charmcraft", "pack", "--destructive-mode"]
+            elif "lxd" in users_groups:
+                # user already has lxd group active
+                cmd = ["charmcraft", "pack"]
+            else:
+                # building with lxd builder and user does't already have lxd group;
+                # make sure it's available and if so, try using `sg` to acquire it
+                assert "lxd" in all_groups, (
+                    "Group 'lxd' required but not available; "
+                    "ensure that lxd is available or use --destructive-mode"
+                )
+                cmd = ["sg", "lxd", "-c", "charmcraft pack"]
 
         log.info(f"Building charm {charm_name}")
         returncode, stdout, stderr = await self.run(*cmd, cwd=charm_abs)
