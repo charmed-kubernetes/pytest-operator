@@ -32,7 +32,6 @@ jobs:
     - name: Install Dependencies
       run: |
         pip install tox
-        sudo snap install charmcraft --classic
     - name: Run unit tests
       run: tox -e unit
   integration-test:

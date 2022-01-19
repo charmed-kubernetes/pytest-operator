@@ -1,6 +1,7 @@
 import logging
 from unittest.mock import Mock, AsyncMock, ANY, patch
 from pathlib import Path
+from zipfile import ZipFile
 import pytest
 
 from pytest_operator import plugin
@@ -57,10 +58,13 @@ async def test_destructive_mode(monkeypatch, tmp_path_factory):
 
 @pytest.fixture(scope="module")
 async def resource_charm(request, tmp_path_factory):
-    ops_test = plugin.OpsTest(request, tmp_path_factory)
+    """Creates a mock charm without building it."""
+    dst_path = tmp_path_factory.mktemp(request.fixturename) / "resourced-charm.charm"
     charm_dir = Path("tests") / "data" / "charms" / "resourced-charm"
-    resource_charm = await ops_test.build_charm(charm_dir)
-    yield resource_charm
+    with ZipFile(dst_path, mode="w") as zipfile:
+        with zipfile.open("metadata.yaml", mode="w") as metadata:
+            metadata.write((charm_dir / "metadata.yaml").read_bytes())
+    yield dst_path
 
 
 async def test_plugin_build_resources(tmp_path_factory):
