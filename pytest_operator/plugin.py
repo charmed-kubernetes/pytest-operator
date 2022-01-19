@@ -1,18 +1,24 @@
 import asyncio
 import grp
 import inspect
+import json
 import logging
 import os
 import re
 import shutil
+import shlex
 import subprocess
 import sys
 import textwrap
+from collections import namedtuple
 from fnmatch import fnmatch
 from pathlib import Path
 from random import choices
 from string import ascii_lowercase, digits, hexdigits
 from typing import Iterable, Optional
+from urllib.request import urlretrieve, urlopen
+from urllib.error import HTTPError
+from zipfile import Path as ZipPath
 
 import jinja2
 import pytest
@@ -165,14 +171,19 @@ def handle_file_delete_error(function, path, execinfo):
     log.warn(f"Failed to delete '{path}' due to {execinfo[1]}")
 
 
+Arch = namedtuple("Arch", "base,arch,tail")
+
+
 class OpsTest:
     """Utility class for testing Operator Charms."""
+
+    CS_URL = "https://api.jujucharms.com/charmstore/v5"
 
     _instance = None  # store instance so we can tell if it's been used yet
 
     def __init__(self, request, tmp_path_factory):
         self.request = request
-        self.tmp_path = tmp_path_factory.mktemp(self.default_model_name)
+        self.tmp_path: Path = tmp_path_factory.mktemp(self.default_model_name)
         log.info(f"Using tmp_path: {self.tmp_path}")
 
         # Flag indicating whether all subsequent tests should be aborted.
@@ -392,6 +403,114 @@ class OpsTest:
             *(self.build_charm(charm_path) for charm_path in charm_paths)
         )
         return {charm.stem.split("_")[0]: charm for charm in charms}
+
+    @staticmethod
+    def _charm_file_resources(built_charm: Path):
+        if not built_charm.exists():
+            raise FileNotFoundError(f"Failed to locate built charm {built_charm}")
+
+        charm_path = ZipPath(built_charm)
+        metadata_path = charm_path / "metadata.yaml"
+        resources = yaml.safe_load(metadata_path.read_text())["resources"]
+
+        return {
+            name: Path(resource.get("filename"))
+            for name, resource in resources.items()
+            if resource.get("type") == "file"
+        }
+
+    def arch_specific_resources(self, built_charm: Path):
+        """
+        Discover architecture specific charm file resources by presence of
+        arch names in the resource.  If there is a resources that shares the same
+        base and tail of another arch specific resource, assume that it's an
+        amd64 specific resource.
+        """
+        resources = self._charm_file_resources(built_charm)
+        arch_based = re.compile(r"^(\S+)(?:-(amd64|arm64|s390x))(\S+)?")
+        arch_resources = (arch_based.match(rsc) for rsc in resources)
+        arch_resources = {
+            rsc.string: Arch(*rsc.groups()) for rsc in arch_resources if rsc
+        }
+
+        # some resources are arch specific but don't include amd64 in its name
+        # they'll be identified as being named <base><tail> where there is
+        # another resource with <base>-<arch><tail>
+        potentials = {(rsc.base, rsc.tail) for rsc in arch_resources.values()}
+        for base, tail in potentials:
+            amd64_rsc = f"{base}{tail or ''}"
+            if resources.get(amd64_rsc):
+                arch_resources[amd64_rsc] = Arch(base, "amd64", tail)
+        return arch_resources
+
+    async def build_resources(self, build_script: Path):
+        build_script = build_script.absolute()
+        if not build_script.exists():
+            raise FileNotFoundError(
+                f"Failed to locate resource build script {build_script}"
+            )
+
+        log.info("Build Resources...")
+        dst_dir = self.tmp_path / "resources"
+        dst_dir.mkdir(exist_ok=True)
+        rc, stdout, stderr = await self.run(
+            *shlex.split(f"sudo {build_script}"), cwd=dst_dir, check=False
+        )
+        if rc != 0:
+            log.warning(f"{build_script} failed: {(stderr or stdout).strip()}")
+        return list(dst_dir.glob("*.*"))
+
+    @staticmethod
+    def _charm_name(built_charm: Path):
+        if not built_charm.exists():
+            raise FileNotFoundError(f"Failed to locate built charm {built_charm}")
+
+        charm_path = ZipPath(built_charm)
+        metadata_path = charm_path / "metadata.yaml"
+        return yaml.safe_load(metadata_path.read_text())["name"]
+
+    def _charm_id(self, charm, channel):
+        url = f"{self.CS_URL}/{charm}/meta/id-revision?channel={channel}"
+        try:
+            resp = urlopen(url)
+        except HTTPError as ex:
+            resp = ex
+        if 200 <= resp.status < 300:
+            revision = json.loads(resp)["Revision"]
+            return f"charm-{revision}"
+        raise RuntimeError(
+            f"Charm {charm} not found in charmstore at channel={channel}"
+        )
+
+    def download_resource(self, charm_id, resource, dest_path: Path):
+        url = f"{self.CS_URL}/{charm_id}/meta/resources/{resource}"
+        resp = urlopen(url)
+        if not (200 <= resp.status < 300):
+            raise RuntimeError(f"Charm {charm_id} {resource} not found in charmstore")
+
+        rev = json.loads(resp)["Revision"]
+        url = f"{self.CS_URL}/{charm_id}/resource/{resource}/{rev}"
+        local_file, header = urlretrieve(url, dest_path)
+        return local_file
+
+    async def download_resources(
+        self,
+        built_charm: Path,
+        owner="",
+        channel="edge",
+        filter_in=lambda rsc: True,
+        name=lambda rsc, path: path,
+    ):
+        charm_name = (f"~{owner}/" if owner else "") + self._charm_name(built_charm)
+        charm_id = self._charm_id(charm_name, channel)
+        dst_dir = self.tmp_path / "resources"
+        return {
+            resource: self.download_resource(
+                charm_id, resource, dst_dir / name(resource, path)
+            )
+            for resource, path in self._charm_file_resources(built_charm).items()
+            if filter_in(resource)
+        }
 
     async def build_bundle(
         self,
