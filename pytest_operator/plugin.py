@@ -219,16 +219,18 @@ class OpsTest:
         stderr (decoded as utf8). Otherwise, calls `pytest.fail` with
         `fail_msg` and relevant command info.
         """
+        env = {**os.environ}
+        if self.jujudata:
+            env["JUJU_DATA"] = self.jujudata.path
+        if self.model_full_name:
+            env["JUJU_MODEL"] = self.model_full_name
+
         proc = await asyncio.create_subprocess_exec(
             *(str(c) for c in cmd),
             cwd=str(cwd or "."),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env={
-                **os.environ,
-                "JUJU_DATA": self.jujudata.path,
-                "JUJU_MODEL": self.model_full_name,
-            },
+            env=env,
         )
         stdout, stderr = await proc.communicate()
         stdout, stderr = stdout.decode("utf8"), stderr.decode("utf8")

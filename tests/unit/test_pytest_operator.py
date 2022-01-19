@@ -2,8 +2,6 @@ import logging
 from unittest.mock import Mock, AsyncMock, ANY, patch
 from pathlib import Path
 import pytest
-import shutil
-import subprocess
 
 from pytest_operator import plugin
 
@@ -58,30 +56,11 @@ async def test_destructive_mode(monkeypatch, tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
-def resource_charm(request, tmp_path_factory):
-    tmp_path: Path = tmp_path_factory.mktemp(request.fixturename)
+async def resource_charm(request, tmp_path_factory):
+    ops_test = plugin.OpsTest(request, tmp_path_factory)
     charm_dir = Path("tests") / "data" / "charms" / "resourced-charm"
-    try:
-        subprocess.check_call(["charmcraft", "pack"], cwd=charm_dir)
-    except subprocess.CalledProcessError as e:
-        log.exception(
-            f"Failed to build charm in {charm_dir}\n"
-            f"errors: {e.stdout or e.stderr}"
-        )
-        raise
-    shutil.rmtree(charm_dir / "build")
-    for charm in charm_dir.glob("*.charm"):
-        charm.rename(tmp_path / charm.name)
-    yield next(tmp_path.glob("*.charm"))
-    shutil.rmtree(tmp_path)
-
-
-def test_plugin_get_resources(tmp_path_factory, resource_charm):
-    ops_test = plugin.OpsTest(Mock(**{"module.__name__": "test"}), tmp_path_factory)
-    resources = ops_test.arch_specific_resources(resource_charm)
-    assert resources.keys() == {"resource-file-arm64", "resource-file"}
-    assert resources["resource-file-arm64"].arch == "arm64"
-    assert resources["resource-file"].arch == "amd64"
+    resource_charm = await ops_test.build_charm(charm_dir)
+    yield resource_charm
 
 
 async def test_plugin_build_resources(tmp_path_factory):
@@ -101,6 +80,14 @@ async def test_plugin_build_resources(tmp_path_factory):
     build_script = Path("tests") / "data" / "build_resources.sh"
     resources = await ops_test.build_resources(build_script)
     assert resources and all(rsc.exists() for rsc in resources)
+
+
+def test_plugin_get_resources(tmp_path_factory, resource_charm):
+    ops_test = plugin.OpsTest(Mock(**{"module.__name__": "test"}), tmp_path_factory)
+    resources = ops_test.arch_specific_resources(resource_charm)
+    assert resources.keys() == {"resource-file-arm64", "resource-file"}
+    assert resources["resource-file-arm64"].arch == "arm64"
+    assert resources["resource-file"].arch == "amd64"
 
 
 @patch(
