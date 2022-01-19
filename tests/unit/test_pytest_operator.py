@@ -1,10 +1,13 @@
+import logging
 from unittest.mock import Mock, AsyncMock, ANY, patch
 from pathlib import Path
 import pytest
 import shutil
-from subprocess import check_call
+import subprocess
 
 from pytest_operator import plugin
+
+log = logging.getLogger(__name__)
 
 
 async def test_destructive_mode(monkeypatch, tmp_path_factory):
@@ -58,7 +61,14 @@ async def test_destructive_mode(monkeypatch, tmp_path_factory):
 def resource_charm(request, tmp_path_factory):
     tmp_path: Path = tmp_path_factory.mktemp(request.fixturename)
     charm_dir = Path("tests") / "data" / "charms" / "resourced-charm"
-    check_call(["charmcraft", "pack"], cwd=charm_dir)
+    try:
+        subprocess.check_call(["charmcraft", "pack"], cwd=charm_dir)
+    except subprocess.CalledProcessError as e:
+        log.exception(
+            f"Failed to build charm in {charm_dir}\n"
+            f"errors: {e.stdout or e.stderr}"
+        )
+        raise
     shutil.rmtree(charm_dir / "build")
     for charm in charm_dir.glob("*.charm"):
         charm.rename(tmp_path / charm.name)
