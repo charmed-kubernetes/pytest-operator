@@ -1,0 +1,8 @@
+type: charm
+parts:
+  charm:
+    # updated setuptools needed to install jinja2 dependency
+    charm-python-packages: [setuptools]
+bases:
+- name: "ubuntu"
+  channel: "20.04"
