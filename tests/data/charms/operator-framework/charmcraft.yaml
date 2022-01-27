@@ -1,8 +1,10 @@
 type: charm
 parts:
   charm:
-    # updated setuptools needed to install jinja2 dependency
-    charm-python-packages: [setuptools]
+    charm-python-packages:
+      - setuptools  # needed to install jinja2
+    build-packages:
+      - libffi-dev  # needed to install cffi brought in by juju
 bases:
 - name: "ubuntu"
   channel: "20.04"
