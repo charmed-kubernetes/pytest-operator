@@ -11,6 +11,7 @@ import subprocess
 import sys
 import textwrap
 from collections import namedtuple
+from functools import cached_property
 from fnmatch import fnmatch
 from pathlib import Path
 from random import choices
@@ -174,10 +175,91 @@ def handle_file_delete_error(function, path, execinfo):
 Arch = namedtuple("Arch", "base,arch,tail")
 
 
+class Charmhub:
+    CH_URL = "https://api.charmhub.io/v2"
+
+    def __init__(self, charmhub_name):
+        self._name = charmhub_name
+
+    @cached_property
+    def info(self):
+        url = f"{self.CH_URL}/charms/info/{self._name}?fields=default-release.resources"
+        try:
+            resp = urlopen(url)
+        except HTTPError as ex:
+            resp = ex
+        if 200 <= resp.status < 300:
+            return json.loads(resp.read())
+        raise RuntimeError(f"Charm {self._name} not found in charmhub.")
+
+    @property
+    def exists(self):
+        try:
+            return bool(self.info)
+        except RuntimeError:
+            return False
+
+    def download_resource(self, resource, destination):
+        rsc = self.info["default-release"]["resources"][resource]
+        url = rsc["download"]["url"]
+        target, _msg = urlretrieve(url, destination)
+        return resource["name"], target
+
+    def download_resources(self, resource_path):
+        resource_path = Path(resource_path)
+        resource_path.mkdir(parents=True, exist_ok=True)
+        return dict(
+            self.download_resource(rsc, resource_path)
+            for rsc in self.info["default-release"]["resources"]
+        )
+
+
+class CharmStore:
+    CS_URL = "https://api.jujucharms.com/charmstore/v5"
+
+    def __init__(self, charmstore_name, channel="edge"):
+        self._name = charmstore_name
+        self._channel = channel
+
+    @cached_property
+    def _charm_id(self):
+        url = f"{self.CS_URL}/{self._name}/meta/id-revision?channel={self._channel}"
+        try:
+            resp = urlopen(url)
+        except HTTPError as ex:
+            resp = ex
+        if 200 <= resp.status < 300:
+            revision = json.loads(resp)["Revision"]
+            return f"charm-{revision}"
+        raise RuntimeError(
+            f"Charm {self._name} not found in charmstore at channel={self._channel}"
+        )
+
+    @property
+    def exists(self):
+        try:
+            return bool(self._charm_id)
+        except RuntimeError:
+            return False
+
+    def download_resource(self, resource, destination: Path):
+        charm_id = self._charm_id
+        url = f"{self.CS_URL}/{charm_id}/meta/resources/{resource}"
+        try:
+            resp = urlopen(url)
+        except HTTPError as ex:
+            resp = ex
+        if not (200 <= resp.status < 300):
+            raise RuntimeError(f"Charm {charm_id} {resource} not found in charmstore")
+
+        rev = json.loads(resp.read())["Revision"]
+        url = f"{self.CS_URL}/{charm_id}/resource/{resource}/{rev}"
+        local_file, header = urlretrieve(url, destination)
+        return local_file
+
+
 class OpsTest:
     """Utility class for testing Operator Charms."""
-
-    CS_URL = "https://api.jujucharms.com/charmstore/v5"
 
     _instance = None  # store instance so we can tell if it's been used yet
 
@@ -471,30 +553,6 @@ class OpsTest:
         metadata_path = charm_path / "metadata.yaml"
         return yaml.safe_load(metadata_path.read_text())["name"]
 
-    def _charm_id(self, charm, channel):
-        url = f"{self.CS_URL}/{charm}/meta/id-revision?channel={channel}"
-        try:
-            resp = urlopen(url)
-        except HTTPError as ex:
-            resp = ex
-        if 200 <= resp.status < 300:
-            revision = json.loads(resp)["Revision"]
-            return f"charm-{revision}"
-        raise RuntimeError(
-            f"Charm {charm} not found in charmstore at channel={channel}"
-        )
-
-    def download_resource(self, charm_id, resource, dest_path: Path):
-        url = f"{self.CS_URL}/{charm_id}/meta/resources/{resource}"
-        resp = urlopen(url)
-        if not (200 <= resp.status < 300):
-            raise RuntimeError(f"Charm {charm_id} {resource} not found in charmstore")
-
-        rev = json.loads(resp)["Revision"]
-        url = f"{self.CS_URL}/{charm_id}/resource/{resource}/{rev}"
-        local_file, header = urlretrieve(url, dest_path)
-        return local_file
-
     async def download_resources(
         self,
         built_charm: Path,
@@ -504,11 +562,18 @@ class OpsTest:
         name=lambda rsc, path: path,
     ):
         charm_name = (f"~{owner}/" if owner else "") + self._charm_name(built_charm)
-        charm_id = self._charm_id(charm_name, channel)
+        downloader = Charmhub(charm_name)
+        if not downloader.exists:
+            downloader = CharmStore(charm_name, channel)
+        if not downloader.exists:
+            raise RuntimeError(
+                f"Cannot find {charm_name} in either Charmstore or Charmhub"
+            )
+
         dst_dir = self.tmp_path / "resources"
         return {
-            resource: self.download_resource(
-                charm_id, resource, dst_dir / name(resource, path)
+            resource: downloader.download_resource(
+                resource, dst_dir / name(resource, path)
             )
             for resource, path in self._charm_file_resources(built_charm).items()
             if filter_in(resource)

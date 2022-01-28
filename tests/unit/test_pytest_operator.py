@@ -95,7 +95,7 @@ def test_plugin_get_resources(tmp_path_factory, resource_charm):
 
 
 @patch(
-    "pytest_operator.plugin.OpsTest._charm_id",
+    "pytest_operator.plugin.CharmStore._charm_id",
     new=Mock(return_value="resourced-charm-1"),
 )
 async def test_plugin_fetch_resources(tmp_path_factory, resource_charm):
@@ -105,14 +105,17 @@ async def test_plugin_fetch_resources(tmp_path_factory, resource_charm):
     ops_test.model_full_name = ops_test.default_model_name
     arch_resources = ops_test.arch_specific_resources(resource_charm)
 
-    def dl_rsc(charm_id, resource, dest_path):
+    def dl_rsc(resource, dest_path):
+        assert type(resource) == str
         return dest_path
 
     def rename(resource, path):
         _, ext = path.name.split(".", 1)
         return path.parent / f"{resource}.{ext}"
 
-    with patch("pytest_operator.plugin.OpsTest.download_resource", side_effect=dl_rsc):
+    with patch(
+        "pytest_operator.plugin.CharmStore.download_resource", side_effect=dl_rsc
+    ):
         downloaded = await ops_test.download_resources(
             resource_charm, filter_in=lambda rsc: rsc in arch_resources, name=rename
         )
