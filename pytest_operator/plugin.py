@@ -176,10 +176,18 @@ Arch = namedtuple("Arch", "base,arch,tail")
 
 
 class Charmhub:
+    """
+    Fetch resources from Charmhub
+    API DOCS: https://api.snapcraft.io/docs/charms.html
+    """
+
     CH_URL = "https://api.charmhub.io/v2"
 
-    def __init__(self, charmhub_name):
+    def __init__(self, charmhub_name, channel):
         self._name = charmhub_name
+        # TODO: channel not used yet for this in the info api
+        # instead we will be fetching from Most stable risk on default trac
+        self._channel = channel
 
     @cached_property
     def info(self):
@@ -199,19 +207,14 @@ class Charmhub:
         except RuntimeError:
             return False
 
-    def download_resource(self, resource, destination):
-        rsc = self.info["default-release"]["resources"][resource]
-        url = rsc["download"]["url"]
-        target, _msg = urlretrieve(url, destination)
-        return resource["name"], target
+    @cached_property
+    def resource_map(self):
+        return {rsc["name"]: rsc for rsc in self.info["default-release"]["resources"]}
 
-    def download_resources(self, resource_path):
-        resource_path = Path(resource_path)
-        resource_path.mkdir(parents=True, exist_ok=True)
-        return dict(
-            self.download_resource(rsc, resource_path)
-            for rsc in self.info["default-release"]["resources"]
-        )
+    def download_resource(self, resource, destination):
+        rsc = self.resource_map[resource]
+        target, _msg = urlretrieve(rsc["download"]["url"], destination)
+        return target
 
 
 class CharmStore:
@@ -561,9 +564,10 @@ class OpsTest:
         filter_in=lambda rsc: True,
         name=lambda rsc, path: path,
     ):
-        charm_name = (f"~{owner}/" if owner else "") + self._charm_name(built_charm)
-        downloader = Charmhub(charm_name)
+        charm_name = (f"{owner}-" if owner else "") + self._charm_name(built_charm)
+        downloader = Charmhub(charm_name, channel)
         if not downloader.exists:
+            charm_name = (f"~{owner}/" if owner else "") + self._charm_name(built_charm)
             downloader = CharmStore(charm_name, channel)
         if not downloader.exists:
             raise RuntimeError(

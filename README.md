@@ -41,6 +41,51 @@ async def test_status(ops_test):
     assert ops_test.model.applications["my-charm"].units[0].workload_status == "active"
 ```
 
+## Building/Downloading Charm Resources
+Quite often, when charms are preparing for integration tests, the charms may
+need to attach resources to the charm for it to function. In these cases, 
+the integration code must either build the resources or pull those from external resources.
+
+Example:
+
+```python
+async def test_build_and_deploy(ops_test):
+    charm = await ops_test.build_charm(".")
+
+    build_script = Path.cwd() / "build-charm-resources.sh"
+    resources = await ops_test.build_resources(build_script)
+
+    if resources:
+        # created a dict from list of a filenames
+        resources = {rsc.stem: rsc for rsc in resources}
+    else:
+        def rename(resource, path):
+            _, ext = path.name.split(".", 1)
+            return path.parent / f"{resource}.{ext}"
+        
+        arch_resources = ops_test.arch_specific_resources(charm)
+        resources = await ops_test.download_resources(
+            charm, filter_in=lambda rsc: rsc in arch_resources, name=rename
+        )
+        
+    assert resources, "Failed to build or download charm resources."
+    
+    log.info("Build Bundle...")
+    bundle = ops_test.render_bundle(
+        "tests/data/bundle.yaml", charm=charm, **resources
+    )
+
+    log.info("Deploy Bundle...")
+    juju_cmd = ["deploy", "-m", ops_test.model_full_name, str(bundle)]
+    rc, stdout, stderr = await ops_test.juju(*juju_cmd)
+    assert rc == 0, f"Bundle deploy failed: {(stderr or stdout).strip()}"
+
+    await ops_test.model.wait_for_idle()
+    ...
+```
+
+
+
 ## Reference
 
 More details can be found in [the reference docs](docs/reference.md).
