@@ -20,6 +20,7 @@ import pytest_asyncio.plugin
 import yaml
 from juju.client.jujudata import FileJujuData
 from juju.controller import Controller
+from juju.exceptions import DeadEntityException
 from juju.model import Model
 
 log = logging.getLogger(__name__)
@@ -289,8 +290,12 @@ class OpsTest:
         if not self.keep_model:
             # Forcibly destroy machines in case any units are in error.
             for machine in self.model.machines.values():
-                log.info(f"Destroying machine {machine.id}")
-                await machine.destroy(force=True)
+                try:
+                    log.info(f"Destroying machine {machine.id}")
+                    await machine.destroy(force=True)
+                except DeadEntityException as e:
+                    log.warning(e)
+                    log.warning("Machine already dead, skipping")
             await self.model.disconnect()
             log.info(f"Destroying model {self.model_name}")
             await self._controller.destroy_model(self.model_name)
