@@ -190,7 +190,9 @@ class Charmhub:
 
     @cached_property
     def info(self):
-        query = urlencode(dict(channel=self._channel, fields="default-release.resources"))
+        query = urlencode(
+            dict(channel=self._channel, fields="default-release.resources")
+        )
         url = f"{self.CH_URL}/charms/info/{self._name}?{query}"
         try:
             resp = urlopen(url)

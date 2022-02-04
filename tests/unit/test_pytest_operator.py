@@ -63,11 +63,8 @@ class TestCharmhub:
     def info_api(self):
         with open("tests/data/etcd_ch_api_response.json") as f:
             resp = f.read()
-        with patch('pytest_operator.plugin.urlopen') as mock_url_open:
-            mock_url_open.return_value = SimpleNamespace(
-                status=200,
-                read=lambda: resp
-            )
+        with patch("pytest_operator.plugin.urlopen") as mock_url_open:
+            mock_url_open.return_value = SimpleNamespace(status=200, read=lambda: resp)
             yield mock_url_open
 
     def test_info_api(self, info_api):
@@ -85,7 +82,6 @@ class TestCharmhub:
         ch = plugin.Charmhub("etcd", "latest/edge")
         assert not ch.exists
 
-
     def test_resource_map(self, info_api):
         ch = plugin.Charmhub("etcd", "latest/edge")
         assert len(ch.resource_map) == 3
@@ -93,17 +89,22 @@ class TestCharmhub:
         info_api.assert_called_once()
 
     def test_download_resource(self, info_api, tmpdir):
-        CH_URL = "https://api.charmhub.io/api/v1/resources/download/charm_8bULztKLC5fEw4Mc9gIeerQWey1pHICv"
+        CH_URL = (
+            "https://api.charmhub.io/api/v1/"
+            "resources/download/charm_8bULztKLC5fEw4Mc9gIeerQWey1pHICv"
+        )
         ch = plugin.Charmhub("etcd", "latest/edge")
         with patch("pytest_operator.plugin.urlretrieve") as mock_rtrv:
             mock_rtrv.return_value = tmpdir, None
             for rsc in ch.resource_map:
                 ch.download_resource(rsc, tmpdir)
-            mock_rtrv.assert_has_calls([
-                call(f"{CH_URL}.core_0", tmpdir),
-                call(f"{CH_URL}.etcd_3", tmpdir),
-                call(f"{CH_URL}.snapshot_0", tmpdir),
-            ])
+            mock_rtrv.assert_has_calls(
+                [
+                    call(f"{CH_URL}.core_0", tmpdir),
+                    call(f"{CH_URL}.etcd_3", tmpdir),
+                    call(f"{CH_URL}.snapshot_0", tmpdir),
+                ]
+            )
 
 
 class TestCharmstore:
@@ -119,7 +120,8 @@ class TestCharmstore:
             else:
                 raise FileNotFoundError(f"Unexpected url: {url}")
             return SimpleNamespace(status=200, read=lambda: resp)
-        with patch('pytest_operator.plugin.urlopen') as mock_url_open:
+
+        with patch("pytest_operator.plugin.urlopen") as mock_url_open:
             mock_url_open.side_effect = mock_api
             yield mock_url_open
 
@@ -140,11 +142,13 @@ class TestCharmstore:
             ch.download_resource("core", tmpdir)
             ch.download_resource("etcd", tmpdir)
             ch.download_resource("snapshot", tmpdir)
-            mock_rtrv.assert_has_calls([
-                call(f"{CH_URL}/core/0", tmpdir),
-                call(f"{CH_URL}/etcd/3", tmpdir),
-                call(f"{CH_URL}/snapshot/0", tmpdir),
-            ])
+            mock_rtrv.assert_has_calls(
+                [
+                    call(f"{CH_URL}/core/0", tmpdir),
+                    call(f"{CH_URL}/etcd/3", tmpdir),
+                    call(f"{CH_URL}/snapshot/0", tmpdir),
+                ]
+            )
 
 
 @pytest.fixture(scope="module")
@@ -205,7 +209,7 @@ async def test_plugin_fetch_resources(tmp_path_factory, resource_charm):
         return path.parent / f"{resource}.{ext}"
 
     with patch(
-            "pytest_operator.plugin.CharmStore.download_resource", side_effect=dl_rsc
+        "pytest_operator.plugin.CharmStore.download_resource", side_effect=dl_rsc
     ):
         downloaded = await ops_test.download_resources(
             resource_charm, filter_in=lambda rsc: rsc in arch_resources, name=rename
@@ -214,8 +218,8 @@ async def test_plugin_fetch_resources(tmp_path_factory, resource_charm):
     expected_downloads = {
         "resource-file": ops_test.tmp_path / "resources" / "resource-file.tgz",
         "resource-file-arm64": ops_test.tmp_path
-                               / "resources"
-                               / "resource-file-arm64.tgz",
+        / "resources"
+        / "resource-file-arm64.tgz",
     }
 
     assert downloaded == expected_downloads

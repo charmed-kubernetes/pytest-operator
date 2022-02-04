@@ -34,11 +34,6 @@ jobs:
         pip install tox
     - name: Run unit tests
       run: tox -e unit
-    - name: Upload Coverage
-      uses: codecov/codecov-action@v1
-      with:
-         files: ./report/unit/coverage-xml
-         flags: unittests # optional
 
   integration-test:
     name: Integration test with LXD
