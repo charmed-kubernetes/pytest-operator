@@ -18,6 +18,7 @@ from random import choices
 from string import ascii_lowercase, digits, hexdigits
 from typing import Iterable, Optional
 from urllib.request import urlretrieve, urlopen
+from urllib.parse import urlencode
 from urllib.error import HTTPError
 from zipfile import Path as ZipPath
 
@@ -185,13 +186,12 @@ class Charmhub:
 
     def __init__(self, charmhub_name, channel):
         self._name = charmhub_name
-        # TODO: channel not used yet for this in the info api
-        # instead we will be fetching from Most stable risk on default trac
         self._channel = channel
 
     @cached_property
     def info(self):
-        url = f"{self.CH_URL}/charms/info/{self._name}?fields=default-release.resources"
+        query = urlencode(dict(channel=self._channel, fields="default-release.resources"))
+        url = f"{self.CH_URL}/charms/info/{self._name}?{query}"
         try:
             resp = urlopen(url)
         except HTTPError as ex:
@@ -226,13 +226,14 @@ class CharmStore:
 
     @cached_property
     def _charm_id(self):
-        url = f"{self.CS_URL}/{self._name}/meta/id-revision?channel={self._channel}"
+        query = urlencode(dict(channel=self._channel))
+        url = f"{self.CS_URL}/{self._name}/meta/id-revision?{query}"
         try:
             resp = urlopen(url)
         except HTTPError as ex:
             resp = ex
         if 200 <= resp.status < 300:
-            revision = json.loads(resp)["Revision"]
+            revision = json.loads(resp.read())["Revision"]
             return f"charm-{revision}"
         raise RuntimeError(
             f"Charm {self._name} not found in charmstore at channel={self._channel}"

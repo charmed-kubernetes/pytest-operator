@@ -1,6 +1,8 @@
 import logging
-from unittest.mock import Mock, AsyncMock, ANY, patch
+from unittest.mock import Mock, AsyncMock, ANY, patch, call
+from urllib.error import HTTPError
 from pathlib import Path
+from types import SimpleNamespace
 from zipfile import ZipFile
 import pytest
 
@@ -54,6 +56,95 @@ async def test_destructive_mode(monkeypatch, tmp_path_factory):
         assert str(e).startswith("Failed to build charm")
     assert mock_run.called
     assert mock_run.call_args[0] == ("charmcraft", "pack")
+
+
+class TestCharmhub:
+    @pytest.fixture
+    def info_api(self):
+        with open("tests/data/etcd_ch_api_response.json") as f:
+            resp = f.read()
+        with patch('pytest_operator.plugin.urlopen') as mock_url_open:
+            mock_url_open.return_value = SimpleNamespace(
+                status=200,
+                read=lambda: resp
+            )
+            yield mock_url_open
+
+    def test_info_api(self, info_api):
+        ch = plugin.Charmhub("etcd", "latest/edge")
+        assert ch.info["default-release"]["channel"]["risk"] == "edge"
+        assert ch.info["default-release"]["channel"]["track"] == "latest"
+        info_api.assert_called_once()
+
+    def test_exists(self, info_api):
+        ch = plugin.Charmhub("etcd", "latest/edge")
+        assert ch.exists
+
+    def test_does_not_exist(self, info_api):
+        info_api.side_effect = HTTPError(url="", code=404, msg="", hdrs=None, fp=None)
+        ch = plugin.Charmhub("etcd", "latest/edge")
+        assert not ch.exists
+
+
+    def test_resource_map(self, info_api):
+        ch = plugin.Charmhub("etcd", "latest/edge")
+        assert len(ch.resource_map) == 3
+        assert ch.resource_map.keys() == {"core", "etcd", "snapshot"}
+        info_api.assert_called_once()
+
+    def test_download_resource(self, info_api, tmpdir):
+        CH_URL = "https://api.charmhub.io/api/v1/resources/download/charm_8bULztKLC5fEw4Mc9gIeerQWey1pHICv"
+        ch = plugin.Charmhub("etcd", "latest/edge")
+        with patch("pytest_operator.plugin.urlretrieve") as mock_rtrv:
+            mock_rtrv.return_value = tmpdir, None
+            for rsc in ch.resource_map:
+                ch.download_resource(rsc, tmpdir)
+            mock_rtrv.assert_has_calls([
+                call(f"{CH_URL}.core_0", tmpdir),
+                call(f"{CH_URL}.etcd_3", tmpdir),
+                call(f"{CH_URL}.snapshot_0", tmpdir),
+            ])
+
+
+class TestCharmstore:
+    @pytest.fixture
+    def info_api(self):
+        def mock_api(url):
+            if "id-revision" in url:
+                resp = b'{"Revision": 668}'
+            elif url.endswith("core") or url.endswith("snapshot"):
+                resp = b'{"Revision": 0}'
+            elif url.endswith("etcd"):
+                resp = b'{"Revision": 3}'
+            else:
+                raise FileNotFoundError(f"Unexpected url: {url}")
+            return SimpleNamespace(status=200, read=lambda: resp)
+        with patch('pytest_operator.plugin.urlopen') as mock_url_open:
+            mock_url_open.side_effect = mock_api
+            yield mock_url_open
+
+    def test_exists(self, info_api):
+        ch = plugin.CharmStore("cs:etcd", "edge")
+        assert ch.exists
+
+    def test_does_not_exist(self, info_api):
+        info_api.side_effect = HTTPError(url="", code=404, msg="", hdrs=None, fp=None)
+        ch = plugin.CharmStore("cs:etcd", "edge")
+        assert not ch.exists
+
+    def test_download_resource(self, info_api, tmpdir):
+        CH_URL = "https://api.jujucharms.com/charmstore/v5/charm-668/resource"
+        ch = plugin.CharmStore("cs:etcd", "edge")
+        with patch("pytest_operator.plugin.urlretrieve") as mock_rtrv:
+            mock_rtrv.return_value = tmpdir, None
+            ch.download_resource("core", tmpdir)
+            ch.download_resource("etcd", tmpdir)
+            ch.download_resource("snapshot", tmpdir)
+            mock_rtrv.assert_has_calls([
+                call(f"{CH_URL}/core/0", tmpdir),
+                call(f"{CH_URL}/etcd/3", tmpdir),
+                call(f"{CH_URL}/snapshot/0", tmpdir),
+            ])
 
 
 @pytest.fixture(scope="module")
@@ -114,7 +205,7 @@ async def test_plugin_fetch_resources(tmp_path_factory, resource_charm):
         return path.parent / f"{resource}.{ext}"
 
     with patch(
-        "pytest_operator.plugin.CharmStore.download_resource", side_effect=dl_rsc
+            "pytest_operator.plugin.CharmStore.download_resource", side_effect=dl_rsc
     ):
         downloaded = await ops_test.download_resources(
             resource_charm, filter_in=lambda rsc: rsc in arch_resources, name=rename
@@ -123,8 +214,8 @@ async def test_plugin_fetch_resources(tmp_path_factory, resource_charm):
     expected_downloads = {
         "resource-file": ops_test.tmp_path / "resources" / "resource-file.tgz",
         "resource-file-arm64": ops_test.tmp_path
-        / "resources"
-        / "resource-file-arm64.tgz",
+                               / "resources"
+                               / "resource-file-arm64.tgz",
     }
 
     assert downloaded == expected_downloads
