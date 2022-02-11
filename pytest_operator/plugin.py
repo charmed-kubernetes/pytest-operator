@@ -238,8 +238,10 @@ class Charmhub:
     def resource_map(self):
         return {rsc["name"]: rsc for rsc in self.info["default-release"]["resources"]}
 
-    def download_resource(self, resource, destination):
+    def download_resource(self, resource, destination: Path):
         rsc = self.resource_map[resource]
+        log.info(f"Retrieving {resource} from charmhub...")
+        destination.parent.mkdir(parents=True, exist_ok=True)
         target, _msg = urlretrieve(rsc["download"]["url"], destination)
         return target
 
@@ -284,7 +286,9 @@ class CharmStore:
             raise RuntimeError(f"Charm {charm_id} {resource} not found in charmstore")
 
         rev = json.loads(resp.read())["Revision"]
+        log.info(f"Retrieving {resource} from charmstore...")
         url = f"{self.CS_URL}/{charm_id}/resource/{resource}/{rev}"
+        destination.parent.mkdir(parents=True, exist_ok=True)
         local_file, header = urlretrieve(url, destination)
         return local_file
 

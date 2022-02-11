@@ -95,6 +95,7 @@ class TestCharmhub:
         )
         ch = plugin.Charmhub("etcd", "latest/edge")
         with patch("pytest_operator.plugin.urlretrieve") as mock_rtrv:
+            tmpdir = Path(tmpdir)
             mock_rtrv.return_value = tmpdir, None
             for rsc in ch.resource_map:
                 ch.download_resource(rsc, tmpdir)
@@ -138,6 +139,7 @@ class TestCharmstore:
         CH_URL = "https://api.jujucharms.com/charmstore/v5/charm-668/resource"
         ch = plugin.CharmStore("cs:etcd", "edge")
         with patch("pytest_operator.plugin.urlretrieve") as mock_rtrv:
+            tmpdir = Path(tmpdir)
             mock_rtrv.return_value = tmpdir, None
             ch.download_resource("core", tmpdir)
             ch.download_resource("etcd", tmpdir)
