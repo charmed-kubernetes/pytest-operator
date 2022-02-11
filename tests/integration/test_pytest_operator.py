@@ -53,6 +53,24 @@ class TestPlugin:
             "operator-framework",
         }
 
+    async def test_1_create_crash_dump(self, ops_test):
+        """Check if juju-crashdump was called."""
+        lib_path = Path(__file__).parent.parent.parent
+        user_crashdumps = set(lib_path.glob("juju-crashdump-*.tar.xz"))
+
+        created = await ops_test.create_crash_dump()
+        if not created:
+            pytest.xfail("juju-crashdump command is was not found")
+
+        crashdumps = set(lib_path.glob("juju-crashdump-*.tar.xz")).difference(
+            user_crashdumps
+        )
+        assert len(crashdumps) > 0, "no crash dump was found"
+
+        # clean crashdump from this test
+        for crash_dump in crashdumps:
+            crash_dump.unlink()
+
 
 async def test_func(ops_test):
     assert ops_test.model
