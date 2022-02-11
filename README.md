@@ -59,13 +59,9 @@ async def test_build_and_deploy(ops_test):
         # created a dict from list of a filenames
         resources = {rsc.stem: rsc for rsc in resources}
     else:
-        def rename(resource, path):
-            _, ext = path.name.split(".", 1)
-            return path.parent / f"{resource}.{ext}"
-        
         arch_resources = ops_test.arch_specific_resources(charm)
         resources = await ops_test.download_resources(
-            charm, filter_in=lambda rsc: rsc in arch_resources, name=rename
+            charm, resources=arch_resources
         )
         
     assert resources, "Failed to build or download charm resources."

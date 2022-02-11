@@ -204,22 +204,17 @@ async def test_plugin_fetch_resources(tmp_path_factory, resource_charm):
         assert type(resource) == str
         return dest_path
 
-    def rename(resource, path):
-        _, ext = path.name.split(".", 1)
-        return path.parent / f"{resource}.{ext}"
-
     with patch(
         "pytest_operator.plugin.CharmStore.download_resource", side_effect=dl_rsc
     ):
         downloaded = await ops_test.download_resources(
-            resource_charm, filter_in=lambda rsc: rsc in arch_resources, name=rename
+            resource_charm, resources=arch_resources
         )
 
+    base = ops_test.tmp_path / "resources"
     expected_downloads = {
-        "resource-file": ops_test.tmp_path / "resources" / "resource-file.tgz",
-        "resource-file-arm64": ops_test.tmp_path
-        / "resources"
-        / "resource-file-arm64.tgz",
+        "resource-file": base / "resource-file" / "resource-file.tgz",
+        "resource-file-arm64": base / "resource-file-arm64" / "resource-file.tgz",
     }
 
     assert downloaded == expected_downloads

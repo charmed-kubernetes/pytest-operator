@@ -10,7 +10,6 @@ import shlex
 import subprocess
 import sys
 import textwrap
-from collections import namedtuple
 from functools import cached_property
 from fnmatch import fnmatch
 from pathlib import Path
@@ -173,7 +172,33 @@ def handle_file_delete_error(function, path, execinfo):
     log.warn(f"Failed to delete '{path}' due to {execinfo[1]}")
 
 
-Arch = namedtuple("Arch", "base,arch,tail")
+class FileResource:
+    """Represents a File based Resource."""
+
+    """
+    Some resources are arch specific but don't include amd64 in the name
+    they'll be identified as being named <base><tail> where there is
+    another resource with <base>-<arch><tail>
+    """
+    ARCH_RE = re.compile(r"^(\S+)(?:-(amd64|arm64|s390x))(\S+)?")
+
+    def __init__(self, name, filename, arch=None):
+        self.name = name
+        self.filename = filename
+        self.name_without_arch = self.name
+        self.arch = arch
+        matches = self.ARCH_RE.match(self.name)
+        if matches:
+            base, arch, tail = matches.groups()
+            self.name_without_arch = f"{base}{tail or ''}"
+            self.arch = arch
+
+    def __repr__(self):
+        return f"ArchResource({self.name},{self.download_path})"
+
+    @property
+    def download_path(self):
+        return Path(self.name) / self.filename
 
 
 class Charmhub:
@@ -495,7 +520,19 @@ class OpsTest:
         return {charm.stem.split("_")[0]: charm for charm in charms}
 
     @staticmethod
-    def _charm_file_resources(built_charm: Path):
+    def charm_file_resources(built_charm: Path):
+        """
+        Locate all file-typed resources to download from store.
+
+        Flag architecture specific file resources by presence of
+        arch names in the resource.  Supported arches are `amd64`, `arm64`, and
+        `s390x`.  If there is a resource that shares the same base and tail of
+        another arch specific resource but doesn't include an arch (e.g., `cni.tgz`
+        and `cni-s390x.tgz` both exist), assume that the unspecified arch is `amd64`.
+
+        Non-architecture specific files will have a None in the `arch` field
+        """
+
         if not built_charm.exists():
             raise FileNotFoundError(f"Failed to locate built charm {built_charm}")
 
@@ -503,35 +540,24 @@ class OpsTest:
         metadata_path = charm_path / "metadata.yaml"
         resources = yaml.safe_load(metadata_path.read_text())["resources"]
 
-        return {
-            name: Path(resource.get("filename"))
+        resources = {
+            name: FileResource(name, resource.get("filename"), None)
             for name, resource in resources.items()
             if resource.get("type") == "file"
         }
 
-    def arch_specific_resources(self, built_charm: Path):
-        """
-        Discover architecture specific charm file resources by presence of
-        arch names in the resource.  If there is a resources that shares the same
-        base and tail of another arch specific resource, assume that it's an
-        amd64 specific resource.
-        """
-        resources = self._charm_file_resources(built_charm)
-        arch_based = re.compile(r"^(\S+)(?:-(amd64|arm64|s390x))(\S+)?")
-        arch_resources = (arch_based.match(rsc) for rsc in resources)
-        arch_resources = {
-            rsc.string: Arch(*rsc.groups()) for rsc in arch_resources if rsc
-        }
+        potentials = {rsc.name_without_arch for rsc in resources.values() if rsc.arch}
+        for rsc_name in potentials:
+            if resources.get(rsc_name):
+                resources[rsc_name].arch = "amd64"
+        return resources
 
-        # some resources are arch specific but don't include amd64 in its name
-        # they'll be identified as being named <base><tail> where there is
-        # another resource with <base>-<arch><tail>
-        potentials = {(rsc.base, rsc.tail) for rsc in arch_resources.values()}
-        for base, tail in potentials:
-            amd64_rsc = f"{base}{tail or ''}"
-            if resources.get(amd64_rsc):
-                arch_resources[amd64_rsc] = Arch(base, "amd64", tail)
-        return arch_resources
+    def arch_specific_resources(self, build_charm):
+        return {
+            name: rsc
+            for name, rsc in self.charm_file_resources(build_charm).items()
+            if rsc.arch
+        }
 
     async def build_resources(self, build_script: Path):
         build_script = build_script.absolute()
@@ -560,13 +586,19 @@ class OpsTest:
         return yaml.safe_load(metadata_path.read_text())["name"]
 
     async def download_resources(
-        self,
-        built_charm: Path,
-        owner="",
-        channel="edge",
-        filter_in=lambda rsc: True,
-        name=lambda rsc, path: path,
+        self, built_charm: Path, owner="", channel="edge", resources=None
     ):
+        """
+        Download Resources associated with a local charm.
+
+        @param Path built_charm: path to local charm
+        @param str  owner:   if the charm is associated with an owner in the charmstore
+                             or namespace in charmhub
+        @param str  channel: channel to pull resources associated with the local charm
+        @param dict[str,FileResource] resources: specific resources associated with
+                                                 this local charm
+        """
+
         charm_name = (f"{owner}-" if owner else "") + self._charm_name(built_charm)
         downloader = Charmhub(charm_name, channel)
         if not downloader.exists:
@@ -578,12 +610,11 @@ class OpsTest:
             )
 
         dst_dir = self.tmp_path / "resources"
+        dl = downloader.download_resource
+        resources = resources or self.charm_file_resources(built_charm)
         return {
-            resource: downloader.download_resource(
-                resource, dst_dir / name(resource, path)
-            )
-            for resource, path in self._charm_file_resources(built_charm).items()
-            if filter_in(resource)
+            resource.name: dl(resource.name, dst_dir / resource.download_path)
+            for resource in resources.values()
         }
 
     async def build_bundle(
