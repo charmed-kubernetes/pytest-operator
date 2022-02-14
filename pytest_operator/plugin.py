@@ -194,11 +194,19 @@ class FileResource:
             self.arch = arch
 
     def __repr__(self):
-        return f"ArchResource({self.name},{self.download_path})"
+        return f"FileResource('{self.name}','{self.filename}','{self.arch}')"
 
     @property
     def download_path(self):
         return Path(self.name) / self.filename
+
+
+def json_request(url, params=None):
+    if params:
+        url = f"{url}?{urlencode(params)}"
+    with urlopen(url) as resp:
+        if 200 <= resp.status < 300:
+            return json.loads(resp.read())
 
 
 class Charmhub:
@@ -215,17 +223,12 @@ class Charmhub:
 
     @cached_property
     def info(self):
-        query = urlencode(
-            dict(channel=self._channel, fields="default-release.resources")
-        )
-        url = f"{self.CH_URL}/charms/info/{self._name}?{query}"
+        params = dict(channel=self._channel, fields="default-release.resources")
+        url = f"{self.CH_URL}/charms/info/{self._name}"
         try:
-            resp = urlopen(url)
+            return json_request(url, params)
         except HTTPError as ex:
-            resp = ex
-        if 200 <= resp.status < 300:
-            return json.loads(resp.read())
-        raise RuntimeError(f"Charm {self._name} not found in charmhub.")
+            raise RuntimeError(f"Charm {self._name} not found in charmhub.") from ex
 
     @property
     def exists(self):
@@ -255,18 +258,16 @@ class CharmStore:
 
     @cached_property
     def _charm_id(self):
-        query = urlencode(dict(channel=self._channel))
-        url = f"{self.CS_URL}/{self._name}/meta/id-revision?{query}"
+        params = dict(channel=self._channel)
+        url = f"{self.CS_URL}/{self._name}/meta/id-revision"
         try:
-            resp = urlopen(url)
+            resp = json_request(url, params)
         except HTTPError as ex:
-            resp = ex
-        if 200 <= resp.status < 300:
-            revision = json.loads(resp.read())["Revision"]
-            return f"charm-{revision}"
-        raise RuntimeError(
-            f"Charm {self._name} not found in charmstore at channel={self._channel}"
-        )
+            raise RuntimeError(
+                f"Charm {self._name} not found in charmstore at channel={self._channel}"
+            ) from ex
+        revision = resp["Revision"]
+        return f"charm-{revision}"
 
     @property
     def exists(self):
@@ -279,13 +280,12 @@ class CharmStore:
         charm_id = self._charm_id
         url = f"{self.CS_URL}/{charm_id}/meta/resources/{resource}"
         try:
-            resp = urlopen(url)
+            resp = json_request(url)
         except HTTPError as ex:
-            resp = ex
-        if not (200 <= resp.status < 300):
-            raise RuntimeError(f"Charm {charm_id} {resource} not found in charmstore")
-
-        rev = json.loads(resp.read())["Revision"]
+            raise RuntimeError(
+                f"Charm {charm_id} {resource} not found in charmstore"
+            ) from ex
+        rev = resp["Revision"]
         log.info(f"Retrieving {resource} from charmstore...")
         url = f"{self.CS_URL}/{charm_id}/resource/{resource}/{rev}"
         destination.parent.mkdir(parents=True, exist_ok=True)

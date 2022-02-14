@@ -1,5 +1,5 @@
 import logging
-from unittest.mock import Mock, AsyncMock, ANY, patch, call
+from unittest.mock import Mock, AsyncMock, ANY, patch, call, MagicMock
 from urllib.error import HTTPError
 from pathlib import Path
 from types import SimpleNamespace
@@ -64,14 +64,19 @@ class TestCharmhub:
         with open("tests/data/etcd_ch_api_response.json") as f:
             resp = f.read()
         with patch("pytest_operator.plugin.urlopen") as mock_url_open:
-            mock_url_open.return_value = SimpleNamespace(status=200, read=lambda: resp)
+            mock_url_open.return_value.__enter__.return_value = SimpleNamespace(
+                status=200, read=lambda: resp
+            )
             yield mock_url_open
 
     def test_info_api(self, info_api):
         ch = plugin.Charmhub("etcd", "latest/edge")
         assert ch.info["default-release"]["channel"]["risk"] == "edge"
         assert ch.info["default-release"]["channel"]["track"] == "latest"
-        info_api.assert_called_once()
+        info_api.assert_called_with(
+            "https://api.charmhub.io/v2/charms/info/etcd"
+            "?channel=latest%2Fedge&fields=default-release.resources"
+        )
 
     def test_exists(self, info_api):
         ch = plugin.Charmhub("etcd", "latest/edge")
@@ -86,7 +91,10 @@ class TestCharmhub:
         ch = plugin.Charmhub("etcd", "latest/edge")
         assert len(ch.resource_map) == 3
         assert ch.resource_map.keys() == {"core", "etcd", "snapshot"}
-        info_api.assert_called_once()
+        info_api.assert_called_with(
+            "https://api.charmhub.io/v2/charms/info/etcd"
+            "?channel=latest%2Fedge&fields=default-release.resources"
+        )
 
     def test_download_resource(self, info_api, tmpdir):
         CH_URL = (
@@ -120,7 +128,11 @@ class TestCharmstore:
                 resp = b'{"Revision": 3}'
             else:
                 raise FileNotFoundError(f"Unexpected url: {url}")
-            return SimpleNamespace(status=200, read=lambda: resp)
+            response = MagicMock()
+            response.__enter__.return_value = SimpleNamespace(
+                status=200, read=lambda: resp
+            )
+            return response  # returns an object to use as a context manager
 
         with patch("pytest_operator.plugin.urlopen") as mock_url_open:
             mock_url_open.side_effect = mock_api
