@@ -34,6 +34,7 @@ jobs:
         pip install tox
     - name: Run unit tests
       run: tox -e unit
+
   integration-test:
     name: Integration test with LXD
     runs-on: ubuntu-latest
