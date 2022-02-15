@@ -1,0 +1,68 @@
+{
+  "default-release": {
+    "channel": {
+      "base": {
+        "architecture": "all",
+        "channel": "20.04",
+        "name": "ubuntu"
+      },
+      "name": "edge",
+      "released-at": "2022-02-03T14:48:32.253616+00:00",
+      "risk": "edge",
+      "track": "latest"
+    },
+    "resources": [
+      {
+        "created-at": "2019-05-09T19:22:02.150000",
+        "description": "Snap package of core\n[DEPRECATED] in favor of using a Snap Store Proxy.\nSee https://ubuntu.com/kubernetes/docs/proxies for more details.\n",
+        "download": {
+          "hash-sha-256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hash-sha-384": "38b060a751ac96384cd9327eb1b1e36a21fdb71114be07434c0cc7bf63f6e1da274edebfe76f65fbd51ad2f14898b95b",
+          "hash-sha-512": "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
+          "hash-sha3-384": "0c63a75b845e4f7d01107d852e4c2485c51a50aaaa94fc61995e71bbee983a2ac3713831264adb47fb6bd1e058d5f004",
+          "size": 0,
+          "url": "https://api.charmhub.io/api/v1/resources/download/charm_8bULztKLC5fEw4Mc9gIeerQWey1pHICv.core_0"
+        },
+        "filename": "core.snap",
+        "name": "core",
+        "revision": 0,
+        "type": "file"
+      },
+      {
+        "created-at": "2017-04-06T18:05:13.223000",
+        "description": "Snap package of etcd\n[DEPRECATED] in favor of using a Snap Store Proxy.\nSee https://ubuntu.com/kubernetes/docs/proxies for more details.\n",
+        "download": {
+          "hash-sha-256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hash-sha-384": "38b060a751ac96384cd9327eb1b1e36a21fdb71114be07434c0cc7bf63f6e1da274edebfe76f65fbd51ad2f14898b95b",
+          "hash-sha-512": "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
+          "hash-sha3-384": "0c63a75b845e4f7d01107d852e4c2485c51a50aaaa94fc61995e71bbee983a2ac3713831264adb47fb6bd1e058d5f004",
+          "size": 0,
+          "url": "https://api.charmhub.io/api/v1/resources/download/charm_8bULztKLC5fEw4Mc9gIeerQWey1pHICv.etcd_3"
+        },
+        "filename": "etcd.snap",
+        "name": "etcd",
+        "revision": 3,
+        "type": "file"
+      },
+      {
+        "created-at": "2016-11-09T20:57:08.731000",
+        "description": "Tarball snapshot of an etcd clusters data.",
+        "download": {
+          "hash-sha-256": "dec229f5b817ef0cedc7a50a13b6dae34ba379e7ceddae3ca6f4503ae6e31ee6",
+          "hash-sha-384": "7ebbe594e1cdbc0f378e58d4fe80a90fcac7f411f0e7030f0c2b2f56b15a89229bdc541ad45b49efef54730b7b70abfe",
+          "hash-sha-512": "8a376c002da5b8a137525e20e33b987b9f4a48cadb53f1d0f234a106123f2a469455a567fba6ba29033235c244b405ad0f7cae762876df6575bde725f4b4f7ee",
+          "hash-sha3-384": "8226f4295c57e3946b2010929743eb7d6930012e5008d25a7a1a3f3bc00f3bba02c91c2c3025149cebd7c375b83fb289",
+          "size": 124,
+          "url": "https://api.charmhub.io/api/v1/resources/download/charm_8bULztKLC5fEw4Mc9gIeerQWey1pHICv.snapshot_0"
+        },
+        "filename": "snapshot.tar.gz",
+        "name": "snapshot",
+        "revision": 0,
+        "type": "file"
+      }
+    ]
+  },
+  "id": "8bULztKLC5fEw4Mc9gIeerQWey1pHICv",
+  "name": "etcd",
+  "type": "charm"
+}

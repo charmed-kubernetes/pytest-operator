@@ -1,19 +1,25 @@
 import asyncio
 import grp
 import inspect
+import json
 import logging
 import os
 import re
-import shlex
 import shutil
+import shlex
 import subprocess
 import sys
 import textwrap
+from functools import cached_property
 from fnmatch import fnmatch
 from pathlib import Path
 from random import choices
 from string import ascii_lowercase, digits, hexdigits
 from typing import Iterable, Optional
+from urllib.request import urlretrieve, urlopen
+from urllib.parse import urlencode
+from urllib.error import HTTPError
+from zipfile import Path as ZipPath
 
 import jinja2
 import pytest
@@ -180,6 +186,127 @@ def handle_file_delete_error(function, path, execinfo):
     log.warn(f"Failed to delete '{path}' due to {execinfo[1]}")
 
 
+class FileResource:
+    """Represents a File based Resource."""
+
+    """
+    Some resources are arch specific but don't include amd64 in the name
+    they'll be identified as being named <base><tail> where there is
+    another resource with <base>-<arch><tail>
+    """
+    ARCH_RE = re.compile(r"^(\S+)(?:-(amd64|arm64|s390x))(\S+)?")
+
+    def __init__(self, name, filename, arch=None):
+        self.name = name
+        self.filename = filename
+        self.name_without_arch = self.name
+        self.arch = arch
+        matches = self.ARCH_RE.match(self.name)
+        if matches:
+            base, arch, tail = matches.groups()
+            self.name_without_arch = f"{base}{tail or ''}"
+            self.arch = arch
+
+    def __repr__(self):
+        return f"FileResource('{self.name}','{self.filename}','{self.arch}')"
+
+    @property
+    def download_path(self):
+        return Path(self.name) / self.filename
+
+
+def json_request(url, params=None):
+    if params:
+        url = f"{url}?{urlencode(params)}"
+    with urlopen(url) as resp:
+        if 200 <= resp.status < 300:
+            return json.loads(resp.read())
+
+
+class Charmhub:
+    """
+    Fetch resources from Charmhub
+    API DOCS: https://api.snapcraft.io/docs/charms.html
+    """
+
+    CH_URL = "https://api.charmhub.io/v2"
+
+    def __init__(self, charmhub_name, channel):
+        self._name = charmhub_name
+        self._channel = channel
+
+    @cached_property
+    def info(self):
+        params = dict(channel=self._channel, fields="default-release.resources")
+        url = f"{self.CH_URL}/charms/info/{self._name}"
+        try:
+            return json_request(url, params)
+        except HTTPError as ex:
+            raise RuntimeError(f"Charm {self._name} not found in charmhub.") from ex
+
+    @property
+    def exists(self):
+        try:
+            return bool(self.info)
+        except RuntimeError:
+            return False
+
+    @cached_property
+    def resource_map(self):
+        return {rsc["name"]: rsc for rsc in self.info["default-release"]["resources"]}
+
+    def download_resource(self, resource, destination: Path):
+        rsc = self.resource_map[resource]
+        log.info(f"Retrieving {resource} from charmhub...")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        target, _msg = urlretrieve(rsc["download"]["url"], destination)
+        return target
+
+
+class CharmStore:
+    CS_URL = "https://api.jujucharms.com/charmstore/v5"
+
+    def __init__(self, charmstore_name, channel="edge"):
+        self._name = charmstore_name
+        self._channel = channel
+
+    @cached_property
+    def _charm_id(self):
+        params = dict(channel=self._channel)
+        url = f"{self.CS_URL}/{self._name}/meta/id-revision"
+        try:
+            resp = json_request(url, params)
+        except HTTPError as ex:
+            raise RuntimeError(
+                f"Charm {self._name} not found in charmstore at channel={self._channel}"
+            ) from ex
+        revision = resp["Revision"]
+        return f"charm-{revision}"
+
+    @property
+    def exists(self):
+        try:
+            return bool(self._charm_id)
+        except RuntimeError:
+            return False
+
+    def download_resource(self, resource, destination: Path):
+        charm_id = self._charm_id
+        url = f"{self.CS_URL}/{charm_id}/meta/resources/{resource}"
+        try:
+            resp = json_request(url)
+        except HTTPError as ex:
+            raise RuntimeError(
+                f"Charm {charm_id} {resource} not found in charmstore"
+            ) from ex
+        rev = resp["Revision"]
+        log.info(f"Retrieving {resource} from charmstore...")
+        url = f"{self.CS_URL}/{charm_id}/resource/{resource}/{rev}"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        local_file, header = urlretrieve(url, destination)
+        return local_file
+
+
 class OpsTest:
     """Utility class for testing Operator Charms."""
 
@@ -187,7 +314,7 @@ class OpsTest:
 
     def __init__(self, request, tmp_path_factory):
         self.request = request
-        self.tmp_path = tmp_path_factory.mktemp(self.default_model_name)
+        self.tmp_path: Path = tmp_path_factory.mktemp(self.default_model_name)
         log.info(f"Using tmp_path: {self.tmp_path}")
 
         # Flag indicating whether all subsequent tests should be aborted.
@@ -227,16 +354,18 @@ class OpsTest:
         stderr (decoded as utf8). Otherwise, calls `pytest.fail` with
         `fail_msg` and relevant command info.
         """
+        env = {**os.environ}
+        if self.jujudata:
+            env["JUJU_DATA"] = self.jujudata.path
+        if self.model_full_name:
+            env["JUJU_MODEL"] = self.model_full_name
+
         proc = await asyncio.create_subprocess_exec(
             *(str(c) for c in cmd),
             cwd=str(cwd or "."),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env={
-                **os.environ,
-                "JUJU_DATA": self.jujudata.path,
-                "JUJU_MODEL": self.model_full_name,
-            },
+            env=env,
         )
         stdout, stderr = await proc.communicate()
         stdout, stderr = stdout.decode("utf8"), stderr.decode("utf8")
@@ -444,6 +573,104 @@ class OpsTest:
             *(self.build_charm(charm_path) for charm_path in charm_paths)
         )
         return {charm.stem.split("_")[0]: charm for charm in charms}
+
+    @staticmethod
+    def charm_file_resources(built_charm: Path):
+        """
+        Locate all file-typed resources to download from store.
+
+        Flag architecture specific file resources by presence of
+        arch names in the resource.  Supported arches are `amd64`, `arm64`, and
+        `s390x`.  If there is a resource that shares the same base and tail of
+        another arch specific resource but doesn't include an arch (e.g., `cni.tgz`
+        and `cni-s390x.tgz` both exist), assume that the unspecified arch is `amd64`.
+
+        Non-architecture specific files will have a None in the `arch` field
+        """
+
+        if not built_charm.exists():
+            raise FileNotFoundError(f"Failed to locate built charm {built_charm}")
+
+        charm_path = ZipPath(built_charm)
+        metadata_path = charm_path / "metadata.yaml"
+        resources = yaml.safe_load(metadata_path.read_text())["resources"]
+
+        resources = {
+            name: FileResource(name, resource.get("filename"), None)
+            for name, resource in resources.items()
+            if resource.get("type") == "file"
+        }
+
+        potentials = {rsc.name_without_arch for rsc in resources.values() if rsc.arch}
+        for rsc_name in potentials:
+            if resources.get(rsc_name):
+                resources[rsc_name].arch = "amd64"
+        return resources
+
+    def arch_specific_resources(self, build_charm):
+        return {
+            name: rsc
+            for name, rsc in self.charm_file_resources(build_charm).items()
+            if rsc.arch
+        }
+
+    async def build_resources(self, build_script: Path):
+        build_script = build_script.absolute()
+        if not build_script.exists():
+            raise FileNotFoundError(
+                f"Failed to locate resource build script {build_script}"
+            )
+
+        log.info("Build Resources...")
+        dst_dir = self.tmp_path / "resources"
+        dst_dir.mkdir(exist_ok=True)
+        rc, stdout, stderr = await self.run(
+            *shlex.split(f"sudo {build_script}"), cwd=dst_dir, check=False
+        )
+        if rc != 0:
+            log.warning(f"{build_script} failed: {(stderr or stdout).strip()}")
+        return list(dst_dir.glob("*.*"))
+
+    @staticmethod
+    def _charm_name(built_charm: Path):
+        if not built_charm.exists():
+            raise FileNotFoundError(f"Failed to locate built charm {built_charm}")
+
+        charm_path = ZipPath(built_charm)
+        metadata_path = charm_path / "metadata.yaml"
+        return yaml.safe_load(metadata_path.read_text())["name"]
+
+    async def download_resources(
+        self, built_charm: Path, owner="", channel="edge", resources=None
+    ):
+        """
+        Download Resources associated with a local charm.
+
+        @param Path built_charm: path to local charm
+        @param str  owner:   if the charm is associated with an owner in the charmstore
+                             or namespace in charmhub
+        @param str  channel: channel to pull resources associated with the local charm
+        @param dict[str,FileResource] resources: specific resources associated with
+                                                 this local charm
+        """
+
+        charm_name = (f"{owner}-" if owner else "") + self._charm_name(built_charm)
+        downloader = Charmhub(charm_name, channel)
+        if not downloader.exists:
+            charm_name = (f"~{owner}/" if owner else "") + self._charm_name(built_charm)
+            downloader = CharmStore(charm_name, channel)
+        if not downloader.exists:
+            raise RuntimeError(
+                f"Cannot find {charm_name} in either Charmstore or Charmhub"
+            )
+
+        dst_dir = self.tmp_path / "resources"
+        dl = downloader.download_resource
+        resources = resources or self.charm_file_resources(built_charm)
+        return {
+            resource.name: dl(resource.name, dst_dir / resource.download_path)
+            for resource in resources.values()
+        }
 
     async def build_bundle(
         self,
