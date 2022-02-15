@@ -55,21 +55,14 @@ class TestPlugin:
 
     async def test_1_create_crash_dump(self, ops_test):
         """Check if juju-crashdump was called."""
-        lib_path = Path(__file__).parent.parent.parent
-        user_crashdumps = set(lib_path.glob("juju-crashdump-*.tar.xz"))
-
+        # configure juju-crashdump output directory to pytest-operator tmp directory
+        ops_test.crash_dump_output = ops_test.tmp_path
         created = await ops_test.create_crash_dump()
         if not created:
-            pytest.xfail("juju-crashdump command is was not found")
+            pytest.xfail("juju-crashdump command was not found")
 
-        crashdumps = set(lib_path.glob("juju-crashdump-*.tar.xz")).difference(
-            user_crashdumps
-        )
+        crashdumps = set(ops_test.tmp_path.glob("juju-crashdump-*.tar.xz"))
         assert len(crashdumps) > 0, "no crash dump was found"
-
-        # clean crashdump from this test
-        for crash_dump in crashdumps:
-            crash_dump.unlink()
 
 
 async def test_func(ops_test):

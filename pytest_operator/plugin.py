@@ -73,6 +73,7 @@ def pytest_addoption(parser):
     parser.addoption(
         "--crash-dump-output",
         action="store",
+        default=None,
         help="Store the completed crash dump in this dir. "
         "The default is current folder.",
     )
