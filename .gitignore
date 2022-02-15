@@ -6,4 +6,3 @@ venv
 build
 dist/
 *.orig
-.idea

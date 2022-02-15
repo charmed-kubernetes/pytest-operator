@@ -4,11 +4,11 @@ import inspect
 import logging
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import textwrap
-import typing
 from fnmatch import fnmatch
 from pathlib import Path
 from random import choices
@@ -63,6 +63,12 @@ def pytest_addoption(parser):
         default=True,
         help="Whether to run juju-crashdump after failed tests. "
         "This is enabled by default.",
+    )
+    parser.addoption(
+        "--crash-dump-output",
+        action="store",
+        help="Store the completed crash dump in this dir. "
+        "The default is current folder.",
     )
 
 
@@ -124,16 +130,6 @@ def pytest_collection_modifyitems(session, config, items):
             item.add_marker("asyncio")
 
 
-def _source_charm_dir(path: Path) -> typing.Optional[Path]:
-    """Return path to charm source directory. (../TOX_ENV_DIR)."""
-    if ".tox" not in path.parts:
-        log.warning("could not find `.tox` directory in path %s", path)
-        return None
-
-    tox_env_dir_index = path.parts.index(".tox")
-    return Path(*path.parts[:tox_env_dir_index])
-
-
 @pytest.hookimpl(tryfirst=True, hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     """Make test results available to fixture finalizers."""
@@ -168,7 +164,8 @@ def abort_on_fail(request):
         ops_test.aborted = True
 
 
-@pytest_asyncio.fixture(scope="module")
+@pytest.fixture(scope="module")
+@pytest.mark.asyncio
 async def ops_test(request, tmp_path_factory):
     check_deps("juju", "charmcraft")
     ops_test = OpsTest(request, tmp_path_factory)
@@ -207,6 +204,7 @@ class OpsTest:
 
         # Flag for enabling the juju-crashdump
         self.crash_dump = request.config.option.crash_dump
+        self.crash_dump_output = request.config.option.crash_dump_output
 
         # These will be set by _setup_model
         self.model_full_name = None
@@ -303,22 +301,15 @@ class OpsTest:
 
     async def create_crash_dump(self) -> bool:
         """Run the juju-crashdump if it's possible."""
-        cmd = [
-            "juju-crashdump",
-            "-s",
-            "-m",
-            self.model_full_name,
-            "-a",
-            "debug-layer",
-            "-a",
-            "config",
-        ]
+        cmd = shlex.split(
+            f"juju-crashdump -s -m {self.model_full_name} -a debug-layer -a config"
+        )
 
-        base_path = _source_charm_dir(self.tmp_path)
-        if base_path:
-            log.debug("juju-crashdump will use output dir `%s`", base_path)
+        output_directory = self.crash_dump_output
+        if output_directory:
+            log.debug("juju-crashdump will use output dir `%s`", output_directory)
             cmd.append("-o")
-            cmd.append(base_path)
+            cmd.append(output_directory)
 
         try:
             return_code, stdout, stderr = await self.run(*cmd)
