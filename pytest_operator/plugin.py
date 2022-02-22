@@ -257,18 +257,23 @@ class CharmStore:
         self._name = charmstore_name
         self._channel = channel
 
+    @staticmethod
+    def _charmpath(charm):
+        if charm.startswith("cs:"):
+            return charm[3:]
+        return charm
+
     @cached_property
     def _charm_id(self):
         params = dict(channel=self._channel)
-        url = f"{self.CS_URL}/{self._name}/meta/id-revision"
+        url = f"{self.CS_URL}/{self._charmpath(self._name)}/meta/id"
         try:
             resp = json_request(url, params)
         except HTTPError as ex:
             raise RuntimeError(
                 f"Charm {self._name} not found in charmstore at channel={self._channel}"
             ) from ex
-        revision = resp["Revision"]
-        return f"charm-{revision}"
+        return resp["Id"]
 
     @property
     def exists(self):
@@ -278,7 +283,7 @@ class CharmStore:
             return False
 
     def download_resource(self, resource, destination: Path):
-        charm_id = self._charm_id
+        charm_id = self._charmpath(self._charm_id)
         url = f"{self.CS_URL}/{charm_id}/meta/resources/{resource}"
         try:
             resp = json_request(url)

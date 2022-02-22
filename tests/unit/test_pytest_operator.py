@@ -120,8 +120,8 @@ class TestCharmstore:
     @pytest.fixture
     def info_api(self):
         def mock_api(url):
-            if "id-revision" in url:
-                resp = b'{"Revision": 668}'
+            if "meta/id" in url:
+                resp = b'{"Id": "etcd-668"}'
             elif url.endswith("core") or url.endswith("snapshot"):
                 resp = b'{"Revision": 0}'
             elif url.endswith("etcd"):
@@ -148,7 +148,7 @@ class TestCharmstore:
         assert not ch.exists
 
     def test_download_resource(self, info_api, tmpdir):
-        CH_URL = "https://api.jujucharms.com/charmstore/v5/charm-668/resource"
+        CH_URL = "https://api.jujucharms.com/charmstore/v5/etcd-668/resource"
         ch = plugin.CharmStore("cs:etcd", "edge")
         with patch("pytest_operator.plugin.urlretrieve") as mock_rtrv:
             tmpdir = Path(tmpdir)
