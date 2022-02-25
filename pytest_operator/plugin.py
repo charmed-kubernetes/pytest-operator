@@ -63,6 +63,20 @@ def pytest_addoption(parser):
         help="Whether to run charmcraft in destructive mode "
         "(as opposed to doing builds in lxc containers)",
     )
+    parser.addoption(
+        "--crash-dump",
+        action="store_true",
+        default=True,
+        help="Whether to run juju-crashdump after failed tests. "
+        "This is enabled by default.",
+    )
+    parser.addoption(
+        "--crash-dump-output",
+        action="store",
+        default=None,
+        help="Store the completed crash dump in this dir. "
+        "The default is current folder.",
+    )
 
 
 def pytest_configure(config):
@@ -321,6 +335,10 @@ class OpsTest:
         self.model_name = request.config.option.model
         self.keep_model = request.config.option.keep_models
 
+        # Flag for enabling the juju-crashdump
+        self.crash_dump = request.config.option.crash_dump
+        self.crash_dump_output = request.config.option.crash_dump_output
+
         # These will be set by _setup_model
         self.model_full_name = None
         self.model = None
@@ -416,11 +434,40 @@ class OpsTest:
         )
         log.info(f"Juju error logs:\n\n{stdout}")
 
+    async def create_crash_dump(self) -> bool:
+        """Run the juju-crashdump if it's possible."""
+        cmd = shlex.split(
+            f"juju-crashdump -s -m {self.model_full_name} -a debug-layer -a config"
+        )
+
+        output_directory = self.crash_dump_output
+        if output_directory:
+            log.debug("juju-crashdump will use output dir `%s`", output_directory)
+            cmd.append("-o")
+            cmd.append(output_directory)
+
+        try:
+            return_code, stdout, stderr = await self.run(*cmd)
+            log.info("juju-crashdump finished [%s]", return_code)
+            return True
+        except FileNotFoundError:
+            log.info("juju-crashdump command was not found.")
+            return False
+
     async def _cleanup_model(self):
         if not self.model:
             return
 
         await self.log_model()
+
+        # NOTE (rgildein): Create juju-crashdump only if any tests failed,
+        # `juju-crashdump` flag is enabled and OpsTest.keep_model == False
+        if (
+            self.request.session.testsfailed > 0
+            and self.crash_dump
+            and self.keep_model is False
+        ):
+            await self.create_crash_dump()
 
         if not self.keep_model:
             # Forcibly destroy machines in case any units are in error.

@@ -53,6 +53,17 @@ class TestPlugin:
             "operator-framework",
         }
 
+    async def test_1_create_crash_dump(self, ops_test):
+        """Check if juju-crashdump was called."""
+        # configure juju-crashdump output directory to pytest-operator tmp directory
+        ops_test.crash_dump_output = ops_test.tmp_path
+        created = await ops_test.create_crash_dump()
+        if not created:
+            pytest.xfail("juju-crashdump command was not found")
+
+        crashdumps = set(ops_test.tmp_path.glob("juju-crashdump-*.tar.xz"))
+        assert len(crashdumps) > 0, "no crash dump was found"
+
 
 async def test_func(ops_test):
     assert ops_test.model
