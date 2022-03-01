@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from unittest.mock import Mock, AsyncMock, ANY, patch, call, MagicMock
 from urllib.error import HTTPError
@@ -120,8 +121,8 @@ class TestCharmstore:
     @pytest.fixture
     def info_api(self):
         def mock_api(url):
-            if "id-revision" in url:
-                resp = b'{"Revision": 668}'
+            if "meta/id" in url:
+                resp = b'{"Id": "etcd-668"}'
             elif url.endswith("core") or url.endswith("snapshot"):
                 resp = b'{"Revision": 0}'
             elif url.endswith("etcd"):
@@ -148,7 +149,7 @@ class TestCharmstore:
         assert not ch.exists
 
     def test_download_resource(self, info_api, tmpdir):
-        CH_URL = "https://api.jujucharms.com/charmstore/v5/charm-668/resource"
+        CH_URL = "https://api.jujucharms.com/charmstore/v5/etcd-668/resource"
         ch = plugin.CharmStore("cs:etcd", "edge")
         with patch("pytest_operator.plugin.urlretrieve") as mock_rtrv:
             tmpdir = Path(tmpdir)
@@ -232,3 +233,61 @@ async def test_plugin_fetch_resources(tmp_path_factory, resource_charm):
     }
 
     assert downloaded == expected_downloads
+
+
+async def test_crash_dump_mode(monkeypatch, tmp_path_factory):
+    """Test running juju-crashdump in OpsTest.cleanup."""
+    patch = monkeypatch.setattr
+    patch(plugin.OpsTest, "run", mock_run := AsyncMock(return_value=(0, "", "")))
+    ops_test = plugin.OpsTest(
+        mock_request := Mock(**{"module.__name__": "test"}), tmp_path_factory
+    )
+    ops_test.crash_dump = True
+    ops_test.keep_model = False
+    ops_test.model = MagicMock()
+    ops_test.model.machines.values.return_value = []
+    ops_test.model.disconnect = AsyncMock()
+    ops_test.model_full_name = "test-model"
+    ops_test.crash_dump_output = None
+    ops_test.log_model = AsyncMock()
+    ops_test._controller = AsyncMock()
+
+    # 0 tests failed
+    mock_request.session.testsfailed = 0
+
+    await ops_test._cleanup_model()
+
+    mock_run.assert_not_called()
+    mock_run.reset_mock()
+
+    # 1 tests failed
+    mock_request.session.testsfailed = 1
+
+    await ops_test._cleanup_model()
+
+    mock_run.assert_called_once_with(
+        "juju-crashdump",
+        "-s",
+        "-m",
+        "test-model",
+        "-a",
+        "debug-layer",
+        "-a",
+        "config",
+    )
+    mock_run.reset_mock()
+
+
+async def test_create_crash_dump(monkeypatch, tmp_path_factory):
+    """Test running create crash dump."""
+
+    async def mock_run(*cmd):
+        proc = await asyncio.create_subprocess_exec("not-valid-command")
+        await proc.communicate()
+
+    patch = monkeypatch.setattr
+    patch(plugin.OpsTest, "run", mock_run)
+    patch(plugin, "log", mock_log := MagicMock())
+    ops_test = plugin.OpsTest(Mock(**{"module.__name__": "test"}), tmp_path_factory)
+    await ops_test.create_crash_dump()
+    mock_log.info.assert_any_call("juju-crashdump command was not found.")
