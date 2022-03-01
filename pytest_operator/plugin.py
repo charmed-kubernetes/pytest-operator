@@ -63,6 +63,13 @@ def pytest_addoption(parser):
         help="Whether to run charmcraft in destructive mode "
         "(as opposed to doing builds in lxc containers)",
     )
+    parser.addoption(
+        "--model-config",
+        action="store",
+        default="model_config.yaml",
+        help="path to a yaml file which will be applied to the model on creation"
+        "(ignored if --model supplied or if the file doesn't exist)",
+    )
 
 
 def pytest_configure(config):
@@ -315,6 +322,7 @@ class OpsTest:
         self.controller_name = request.config.option.controller
         self.model_name = request.config.option.model
         self.keep_model = request.config.option.keep_models
+        self.model_config = request.config.option.model_config
 
         # These will be set by _setup_model
         self.model_full_name = None
@@ -383,8 +391,17 @@ class OpsTest:
             await self._controller.connect(self.controller_name)
             on_cloud = f" on cloud {self.cloud_name}" if self.cloud_name else ""
             log.info(f"Adding model {self.model_full_name}{on_cloud}")
+
+            model_config_file = Path(self.model_config)
+            model_config = None
+            if not model_config_file.exists():
+                log.warning("Can't apply model-configuration from %s", model_config_file)
+            else:
+                log.info("Loading model config from %s", model_config_file)
+                model_config = yaml.safe_load(model_config_file.read_text())
+
             self.model = await self._controller.add_model(
-                self.model_name, cloud_name=self.cloud_name
+                self.model_name, cloud_name=self.cloud_name, config=model_config
             )
             # NB: This call to `juju models` is needed because libjuju's
             # `add_model` doesn't update the models.yaml cache that the Juju
