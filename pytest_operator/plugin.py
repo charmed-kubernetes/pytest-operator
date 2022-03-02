@@ -81,8 +81,9 @@ def pytest_addoption(parser):
         "--model-config",
         action="store",
         default=None,
-        help="path to a yaml file which will be applied to the model on creation"
-        "(ignored if --model supplied or if the specified file doesn't exist)",
+        help="path to a yaml file which will be applied to the model on creation. "
+        "* ignored if `--model` supplied"
+        "* if the specified file doesn't exist, an error will be raised.",
     )
 
 
