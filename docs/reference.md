@@ -23,8 +23,9 @@ Keep any automatically created models.
 ### `--model-config`
 
 Path to a yaml file which will be applied to the model on creation.
-    * ignored if `--model` supplied 
-    * if the specified file doesn't exist, an error will be raised.
+
+ * ignored if `--model` supplied 
+ * if the specified file doesn't exist, an error will be raised.
 
 ## Fixtures
 
