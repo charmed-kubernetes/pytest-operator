@@ -80,9 +80,9 @@ def pytest_addoption(parser):
     parser.addoption(
         "--model-config",
         action="store",
-        default="model_config.yaml",
+        default=None,
         help="path to a yaml file which will be applied to the model on creation"
-        "(ignored if --model supplied or if the file doesn't exist)",
+        "(ignored if --model supplied or if the specified file doesn't exist)",
     )
 
 
@@ -415,13 +415,15 @@ class OpsTest:
             on_cloud = f" on cloud {self.cloud_name}" if self.cloud_name else ""
             log.info(f"Adding model {self.model_full_name}{on_cloud}")
 
-            model_config_file = Path(self.model_config)
             model_config = None
-            if not model_config_file.exists():
-                log.warning("Can't apply model-config from %s", model_config_file)
-            else:
-                log.info("Loading model config from %s", model_config_file)
-                model_config = yaml.safe_load(model_config_file.read_text())
+            if self.model_config:
+                model_config_file = Path(self.model_config)
+                if not model_config_file.exists():
+                    log.error("model-config file %s doesn't exist", model_config_file)
+                    raise FileNotFoundError(model_config_file)
+                else:
+                    log.info("Loading model config from %s", model_config_file)
+                    model_config = yaml.safe_load(model_config_file.read_text())
 
             self.model = await self._controller.add_model(
                 self.model_name, cloud_name=self.cloud_name, config=model_config
