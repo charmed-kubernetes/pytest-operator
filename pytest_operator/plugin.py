@@ -735,6 +735,11 @@ class OpsTest:
             cmd += ["--serial"]
 
         cmd += ["--", "-m", self.model_name] + list(extra_args)
+
+        log.info(
+            "Deploying (and possibly building) bundle using juju-bundle command:"
+            f"'{' '.join(cmd)}'"
+        )
         await self.run(*cmd, check=True)
 
     def render_bundle(self, bundle, context=None, **kwcontext):
