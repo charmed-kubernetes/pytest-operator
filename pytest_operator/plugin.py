@@ -79,6 +79,12 @@ def pytest_addoption(parser):
         "The default is current folder.",
     )
     parser.addoption(
+        "--no-deploy",
+        action="store_true",
+        help="Skip deployment. This will skip all functions marked with "
+        "`abort_on_fail` marker..",
+    )
+    parser.addoption(
         "--model-config",
         action="store",
         default=None,
@@ -97,6 +103,17 @@ def pytest_configure(config):
     config.addinivalue_line(
         "filterwarnings", r"ignore:'with \(yield from lock\)':DeprecationWarning"
     )
+
+
+def pytest_runtest_setup(item):
+    # This will prevent the model from being deployed again. Skips all functions marked
+    # with the abort_on_fail marker.
+    if (
+        "abort_on_fail" in item.keywords
+        and item.config.getoption("--no-deploy")
+        and item.config.getoption("--model") is not None
+    ):
+        pytest.skip("Skipping deployment.")
 
 
 @pytest.fixture(scope="session")
@@ -171,6 +188,7 @@ def abort_on_fail(request):
     ops_test = OpsTest._instance
     if ops_test.aborted:
         pytest.xfail("aborted")
+
     yield
     abort_on_fail = request.node.get_closest_marker("abort_on_fail")
     failed = getattr(request.node, "failed", False)

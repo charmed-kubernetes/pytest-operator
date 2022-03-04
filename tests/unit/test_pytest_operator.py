@@ -291,3 +291,33 @@ async def test_create_crash_dump(monkeypatch, tmp_path_factory):
     ops_test = plugin.OpsTest(Mock(**{"module.__name__": "test"}), tmp_path_factory)
     await ops_test.create_crash_dump()
     mock_log.info.assert_any_call("juju-crashdump command was not found.")
+
+
+def test_no_deploy_mode(testdir):
+    """Test running no deploy mode."""
+    testdir.makepyfile(
+        """
+        import pytest
+
+        def test_01():
+            pass
+
+        @pytest.mark.abort_on_fail
+        def test_build_and_deploy():
+            pass
+
+        def test_02():
+            pass
+    """
+    )
+    # test without --no-deploy option
+    result = testdir.runpytest()
+    result.assert_outcomes(passed=3)
+
+    # test with --no-deploy, but without --model option
+    result = testdir.runpytest("--no-deploy")
+    result.assert_outcomes(passed=3)
+
+    # test with --no-deploy and --model
+    result = testdir.runpytest("--no-deploy", "--model", "test-model")
+    result.assert_outcomes(passed=2, skipped=1)
