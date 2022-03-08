@@ -27,6 +27,12 @@ Path to a yaml file which will be applied to the model on creation.
  * ignored if `--model` supplied 
  * if the specified file doesn't exist, an error will be raised.
 
+### `--no-deploy`
+
+Flag that guarantees skipping the function marked with `skip_if_deployed`. The skip will
+only work if the `--model` parameter is also provided. 
+
+
 ## Fixtures
 
 ### `ops_test`
@@ -64,6 +70,21 @@ initial build and deploy.
 This marker from pytest-asyncio is automatically applied to any `async` test function
 which is collected, so that you don't have to decorate every single one of your tests
 with it.
+
+### `@pytest.mark.skip_if_deployed`
+
+This marker should be used for test_build_and_deploy functions, ie functions that have
+the job of building a charm and then deploying it alone or in a bundle. It will ensure
+that the function can be skipped using the `--no-deploy` parameter, which will help the
+developer to run integration tests multiple times.
+
+---
+**NOTE**
+
+Using the `skip_if_deployed` and` --no-deploy` parameters will not ensure build and
+subsequent refresh of the charm.
+
+---
 
 
 ## Warning Filters

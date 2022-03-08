@@ -81,8 +81,8 @@ def pytest_addoption(parser):
     parser.addoption(
         "--no-deploy",
         action="store_true",
-        help="Skip deployment. This will skip all functions marked with "
-        "`abort_on_fail` marker..",
+        help="This, together with the `--model` parameter, ensures that all functions "
+             "marked with the` skip_if_deployed` tag are skipped."
     )
     parser.addoption(
         "--model-config",
@@ -96,6 +96,7 @@ def pytest_addoption(parser):
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "abort_on_fail")
+    config.addinivalue_line("markers", "skip_if_deployed")
     # These need to be fixed in libjuju and just clutter things up for tests using this.
     config.addinivalue_line(
         "filterwarnings", "ignore:The loop argument:DeprecationWarning"
@@ -106,14 +107,12 @@ def pytest_configure(config):
 
 
 def pytest_runtest_setup(item):
-    # This will prevent the model from being deployed again. Skips all functions marked
-    # with the abort_on_fail marker.
     if (
-        "abort_on_fail" in item.keywords
+        "skip_if_deployed" in item.keywords
         and item.config.getoption("--no-deploy")
         and item.config.getoption("--model") is not None
     ):
-        pytest.skip("Skipping deployment.")
+        pytest.skip("Skipping deployment because --no-deploy was specified.")
 
 
 @pytest.fixture(scope="session")

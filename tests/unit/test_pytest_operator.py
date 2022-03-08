@@ -299,11 +299,12 @@ def test_no_deploy_mode(testdir):
         """
         import pytest
 
-        def test_01():
+        @pytest.mark.abort_on_fail
+        @pytest.mark.skip_if_deployed
+        def test_build_and_deploy():
             pass
 
-        @pytest.mark.abort_on_fail
-        def test_build_and_deploy():
+        def test_01():
             pass
 
         def test_02():
