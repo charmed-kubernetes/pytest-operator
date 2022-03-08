@@ -82,7 +82,7 @@ def pytest_addoption(parser):
         "--no-deploy",
         action="store_true",
         help="This, together with the `--model` parameter, ensures that all functions "
-             "marked with the` skip_if_deployed` tag are skipped."
+        "marked with the` skip_if_deployed` tag are skipped.",
     )
     parser.addoption(
         "--model-config",
