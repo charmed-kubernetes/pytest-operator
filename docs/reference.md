@@ -32,6 +32,17 @@ Path to a yaml file which will be applied to the model on creation.
 Flag that guarantees skipping the function marked with `skip_if_deployed`. The skip will
 only work if the `--model` parameter is also provided. 
 
+### `--crash-dump` and `--no-crash-dump`
+
+This flag enabling automatically running `juju-crashdump` (if a command is available)
+after unsuccessful tests. It's enabled by default and can be disabled with 
+`--no-crash-dump` flag. 
+
+### `--crash-dump-output`
+
+Path to the directory where the `juju-crashdump` output will be stored. The default is
+the current working directory.
+
 
 ## Fixtures
 

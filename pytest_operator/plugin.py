@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import grp
 import inspect
@@ -66,17 +67,17 @@ def pytest_addoption(parser):
     )
     parser.addoption(
         "--crash-dump",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=True,
         help="Whether to run juju-crashdump after failed tests. "
-        "This is enabled by default.",
+        "This is enabled by default and can be disabled with `--no-crash-dump` flag.",
     )
     parser.addoption(
         "--crash-dump-output",
         action="store",
         default=None,
         help="Store the completed crash dump in this dir. "
-        "The default is current folder.",
+        "The default is current working directory.",
     )
     parser.addoption(
         "--no-deploy",
