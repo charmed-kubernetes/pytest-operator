@@ -15,6 +15,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from random import choices
 from string import ascii_lowercase, digits, hexdigits
+from timeit import default_timer as timer
 from typing import Iterable, Optional
 from urllib.request import urlretrieve, urlopen
 from urllib.parse import urlencode
@@ -559,7 +560,10 @@ class OpsTest:
                 cmd = ["sg", "lxd", "-c", "charmcraft pack"]
 
         log.info(f"Building charm {charm_name}")
+        start = timer()
         returncode, stdout, stderr = await self.run(*cmd, cwd=charm_abs)
+        elapsed = timer() - start
+        log.info(f"Built charm {charm_name} in {elapsed:.2f}s")
 
         if not layer_path.exists():
             # Clean up build dir created by charmcraft.
@@ -650,11 +654,15 @@ class OpsTest:
         log.info("Build Resources...")
         dst_dir = self.tmp_path / "resources"
         dst_dir.mkdir(exist_ok=True)
+        start = timer()
         rc, stdout, stderr = await self.run(
             *shlex.split(f"sudo {build_script}"), cwd=dst_dir, check=False
         )
         if rc != 0:
             log.warning(f"{build_script} failed: {(stderr or stdout).strip()}")
+        else:
+            elapsed = timer() - start
+            log.info(f"Built resources in {elapsed:.2f}s")
         return list(dst_dir.glob("*.*"))
 
     @staticmethod
