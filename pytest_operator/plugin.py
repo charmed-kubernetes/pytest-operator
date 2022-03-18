@@ -92,6 +92,10 @@ def pytest_addoption(parser):
         "* ignored if `--model` supplied"
         "* if the specified file doesn't exist, an error will be raised.",
     )
+    arg_parser = parser._getparser()
+    args = arg_parser.parse_args()
+    if args.no_deploy and args.model is None:
+        arg_parser.error("must specify --model when using --no-deploy")
 
 
 def pytest_configure(config):

@@ -293,9 +293,9 @@ async def test_create_crash_dump(monkeypatch, tmp_path_factory):
     mock_log.info.assert_any_call("juju-crashdump command was not found.")
 
 
-def test_no_deploy_mode(testdir):
+def test_no_deploy_mode(pytester):
     """Test running no deploy mode."""
-    testdir.makepyfile(
+    pytester.makepyfile(
         """
         import pytest
 
@@ -312,13 +312,17 @@ def test_no_deploy_mode(testdir):
     """
     )
     # test without --no-deploy option
-    result = testdir.runpytest()
+    result = pytester.runpytest_subprocess()
     result.assert_outcomes(passed=3)
 
     # test with --no-deploy, but without --model option
-    result = testdir.runpytest("--no-deploy")
-    result.assert_outcomes(passed=3)
+    result = pytester.runpytest_subprocess("--no-deploy")
+    assert any(
+        "error: must specify --model when using --no-deploy" in errline
+        for errline in result.errlines
+    )
+    assert result.outlines == []
 
     # test with --no-deploy and --model
-    result = testdir.runpytest("--no-deploy", "--model", "test-model")
+    result = pytester.runpytest_subprocess("--no-deploy", "--model", "test-model")
     result.assert_outcomes(passed=2, skipped=1)
