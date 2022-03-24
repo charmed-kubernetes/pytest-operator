@@ -11,19 +11,19 @@ log = logging.getLogger(__name__)
 class TestPlugin:
     @pytest.mark.abort_on_fail
     async def test_build_and_deploy(self, ops_test):
-        lib_path = Path(__file__).parent.parent.parent
-        pytest_operator = await ops_test.build_lib(lib_path)
+        lib_path = Path(__file__).parent.parent / "data" / "test_lib"
+        test_lib = await ops_test.build_lib(lib_path)
         charms = ops_test.render_charms(
             "tests/data/charms/reactive-framework",
             "tests/data/charms/operator-framework",
             include=["requirements.txt"],
             context={
-                "pytest_operator": pytest_operator,
+                "pytest_operator_test_lib": test_lib,
             },
         )
         req_path = charms[1] / "requirements.txt"
         req_text = req_path.read_text()
-        assert f"file://{pytest_operator}#egg=pytest_operator" not in req_text
+        assert f"file://{test_lib}#egg=pytest-operator-test-lib" not in req_text
         bundle = ops_test.render_bundle(
             # Normally, this would just be a filename like for the charms, rather
             # than an in-line YAML dump, but for visibility purposes in using this
