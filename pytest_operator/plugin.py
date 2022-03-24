@@ -79,6 +79,12 @@ def pytest_addoption(parser):
         "The default is current folder.",
     )
     parser.addoption(
+        "--no-deploy",
+        action="store_true",
+        help="This, together with the `--model` parameter, ensures that all functions "
+        "marked with the` skip_if_deployed` tag are skipped.",
+    )
+    parser.addoption(
         "--model-config",
         action="store",
         default=None,
@@ -86,10 +92,15 @@ def pytest_addoption(parser):
         "* ignored if `--model` supplied"
         "* if the specified file doesn't exist, an error will be raised.",
     )
+    arg_parser = parser._getparser()
+    args = arg_parser.parse_args()
+    if args.no_deploy and args.model is None:
+        arg_parser.error("must specify --model when using --no-deploy")
 
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "abort_on_fail")
+    config.addinivalue_line("markers", "skip_if_deployed")
     # These need to be fixed in libjuju and just clutter things up for tests using this.
     config.addinivalue_line(
         "filterwarnings", "ignore:The loop argument:DeprecationWarning"
@@ -97,6 +108,15 @@ def pytest_configure(config):
     config.addinivalue_line(
         "filterwarnings", r"ignore:'with \(yield from lock\)':DeprecationWarning"
     )
+
+
+def pytest_runtest_setup(item):
+    if (
+        "skip_if_deployed" in item.keywords
+        and item.config.getoption("--no-deploy")
+        and item.config.getoption("--model") is not None
+    ):
+        pytest.skip("Skipping deployment because --no-deploy was specified.")
 
 
 @pytest.fixture(scope="session")
@@ -171,6 +191,7 @@ def abort_on_fail(request):
     ops_test = OpsTest._instance
     if ops_test.aborted:
         pytest.xfail("aborted")
+
     yield
     abort_on_fail = request.node.get_closest_marker("abort_on_fail")
     failed = getattr(request.node, "failed", False)
