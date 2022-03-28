@@ -58,9 +58,7 @@ class TestPlugin:
         # configure juju-crashdump output directory to pytest-operator tmp directory
         ops_test.crash_dump_output = ops_test.tmp_path
         created = await ops_test.create_crash_dump()
-        if not created:
-            pytest.xfail("juju-crashdump command was not found")
-
+        assert created, "juju-crashdump was not created"
         crashdumps = set(ops_test.tmp_path.glob("juju-crashdump-*.tar.xz"))
         assert len(crashdumps) > 0, "no crash dump was found"
 

@@ -1,4 +1,3 @@
-import argparse
 import asyncio
 import grp
 import inspect
@@ -66,11 +65,10 @@ def pytest_addoption(parser):
         "(as opposed to doing builds in lxc containers)",
     )
     parser.addoption(
-        "--crash-dump",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Whether to run juju-crashdump after failed tests. "
-        "This is enabled by default and can be disabled with `--no-crash-dump` flag.",
+        "--no-crash-dump",
+        action="store_true",
+        help="Disabled automatic runs of juju-crashdump after failed tests, "
+        "juju-crashdump runs by default.",
     )
     parser.addoption(
         "--crash-dump-output",
@@ -368,7 +366,7 @@ class OpsTest:
         self.model_config = request.config.option.model_config
 
         # Flag for enabling the juju-crashdump
-        self.crash_dump = request.config.option.crash_dump
+        self.crash_dump = not request.config.option.no_crash_dump
         self.crash_dump_output = request.config.option.crash_dump_output
 
         # These will be set by _setup_model
