@@ -584,7 +584,11 @@ class OpsTest:
         start = timer()
         returncode, stdout, stderr = await self.run(*cmd, cwd=charm_abs)
         elapsed = timer() - start
-        log.info(f"Built charm {charm_name} in {elapsed:.2f}s")
+        if returncode == 0:
+            log.info(f"Built charm {charm_name} in {elapsed:.2f}s")
+        else:
+            log.info(f"Charm build for {charm_name} completed with errors (return code={returncode}) "
+                     f"in {elapsed:.2f}s")
 
         if not layer_path.exists():
             # Clean up build dir created by charmcraft.
