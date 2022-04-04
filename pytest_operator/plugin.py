@@ -65,18 +65,17 @@ def pytest_addoption(parser):
         "(as opposed to doing builds in lxc containers)",
     )
     parser.addoption(
-        "--crash-dump",
+        "--no-crash-dump",
         action="store_true",
-        default=True,
-        help="Whether to run juju-crashdump after failed tests. "
-        "This is enabled by default.",
+        help="Disabled automatic runs of juju-crashdump after failed tests, "
+        "juju-crashdump runs by default.",
     )
     parser.addoption(
         "--crash-dump-output",
         action="store",
         default=None,
         help="Store the completed crash dump in this dir. "
-        "The default is current folder.",
+        "The default is current working directory.",
     )
     parser.addoption(
         "--no-deploy",
@@ -367,7 +366,7 @@ class OpsTest:
         self.model_config = request.config.option.model_config
 
         # Flag for enabling the juju-crashdump
-        self.crash_dump = request.config.option.crash_dump
+        self.crash_dump = not request.config.option.no_crash_dump
         self.crash_dump_output = request.config.option.crash_dump_output
 
         # These will be set by _setup_model
