@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from unittest.mock import Mock, AsyncMock, ANY, patch, call, MagicMock
+from unittest.mock import Mock, AsyncMock, ANY, patch, call, MagicMock, PropertyMock
 from urllib.error import HTTPError
 from pathlib import Path
 from types import SimpleNamespace
@@ -181,7 +181,7 @@ async def test_plugin_build_resources(tmp_path_factory):
     ops_test = plugin.OpsTest(Mock(**{"module.__name__": "test"}), tmp_path_factory)
     ops_test.jujudata = Mock()
     ops_test.jujudata.path = ""
-    ops_test.model_full_name = ops_test.default_model_name
+    # ops_test.model_full_name = ops_test.default_model_name
 
     with pytest.raises(FileNotFoundError):
         build_script = Path("tests") / "data" / "build_resources_does_not_exist.sh"
@@ -212,7 +212,6 @@ async def test_plugin_fetch_resources(tmp_path_factory, resource_charm):
     ops_test = plugin.OpsTest(Mock(**{"module.__name__": "test"}), tmp_path_factory)
     ops_test.jujudata = Mock()
     ops_test.jujudata.path = ""
-    ops_test.model_full_name = ops_test.default_model_name
     arch_resources = ops_test.arch_specific_resources(resource_charm)
 
     def dl_rsc(resource, dest_path):
@@ -243,11 +242,12 @@ async def test_crash_dump_mode(monkeypatch, tmp_path_factory):
         mock_request := Mock(**{"module.__name__": "test"}), tmp_path_factory
     )
     ops_test.crash_dump = True
-    ops_test.keep_model = False
-    ops_test.model = MagicMock()
-    ops_test.model.machines.values.return_value = []
-    ops_test.model.disconnect = AsyncMock()
-    ops_test.model_full_name = "test-model"
+    model = MagicMock()
+    model.machines.values.return_value = []
+    model.disconnect = AsyncMock()
+    ops_test._init_keep_model = None
+    ops_test.current_model = ("test", "local", "model")
+    ops_test._models = {ops_test.current_model: plugin.ModelState(model, None, False)}
     ops_test.crash_dump_output = None
     ops_test.log_model = AsyncMock()
     ops_test._controller = AsyncMock()
@@ -261,6 +261,8 @@ async def test_crash_dump_mode(monkeypatch, tmp_path_factory):
     mock_run.reset_mock()
 
     # 1 tests failed
+    ops_test.current_model = ("test", "local", "model")
+    ops_test._models = {ops_test.current_model: plugin.ModelState(model, None, False)}
     mock_request.session.testsfailed = 1
 
     await ops_test._cleanup_model()
@@ -269,7 +271,7 @@ async def test_crash_dump_mode(monkeypatch, tmp_path_factory):
         "juju-crashdump",
         "-s",
         "-m",
-        "test-model",
+        "test:model",
         "-a",
         "debug-layer",
         "-a",
@@ -312,11 +314,11 @@ def test_no_deploy_mode(pytester):
     """
     )
     # test without --no-deploy option
-    result = pytester.runpytest_subprocess()
+    result = pytester.runpytest_subprocess("--asyncio-mode=auto")
     result.assert_outcomes(passed=3)
 
     # test with --no-deploy, but without --model option
-    result = pytester.runpytest_subprocess("--no-deploy")
+    result = pytester.runpytest_subprocess("--no-deploy", "--asyncio-mode=auto")
     assert any(
         "error: must specify --model when using --no-deploy" in errline
         for errline in result.errlines
@@ -324,5 +326,121 @@ def test_no_deploy_mode(pytester):
     assert result.outlines == []
 
     # test with --no-deploy and --model
-    result = pytester.runpytest_subprocess("--no-deploy", "--model", "test-model")
+    result = pytester.runpytest_subprocess(
+        "--no-deploy", "--model", "test-model", "--asyncio-mode=auto"
+    )
     result.assert_outcomes(passed=2, skipped=1)
+
+
+@pytest.fixture
+def mock_juju():
+    juju = SimpleNamespace()
+    with patch("pytest_operator.plugin.Model", autospec=True) as MockModel, patch(
+        "pytest_operator.plugin.Controller", autospec=True
+    ) as MockController:
+        juju.controller = MockController.return_value
+        juju.model = MockModel.return_value
+
+        juju.controller.controller_name = "this-controller"
+        juju.controller.get_cloud = AsyncMock(return_value="this-cloud")
+        juju.controller.add_model = AsyncMock(return_value=juju.model)
+        juju.controller.connect = AsyncMock()
+
+        juju.model.connect = AsyncMock()
+        juju.model.get_controller = AsyncMock(return_value=juju.controller)
+        yield juju
+
+
+@pytest.fixture
+def setup_request(request, mock_juju):
+    mock_request = MagicMock()
+    mock_request.module.__name__ = request.node.name
+    mock_request.config.option.controller = mock_juju.controller.controller_name
+    mock_request.config.option.model = None
+    mock_request.config.option.cloud = None
+    mock_request.config.option.model_config = None
+    mock_request.config.option.keep_models = False
+    yield mock_request
+
+
+async def test_fixture_set_up_existing_model(
+    mock_juju, setup_request, tmp_path_factory
+):
+    setup_request.config.option.model = "this-model"
+    ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
+    assert ops_test.model is None
+
+    await ops_test._setup_model()
+    mock_juju.model.connect.assert_called_with("this-controller:this-model")
+    assert ops_test.model == mock_juju.model
+    assert ops_test.model_full_name == "this-controller:this-model"
+    assert ops_test.cloud_name is None
+    assert ops_test.model_name == "this-model"
+    assert ops_test.keep_model is True, "Model should be kept if it already exists"
+    assert len(ops_test.models) == 1
+
+
+@patch("pytest_operator.plugin.OpsTest.default_model_name", new_callable=PropertyMock)
+async def test_fixture_set_up_automatic_model(
+    mock_default_model_name, mock_juju, setup_request, tmp_path_factory
+):
+    mock_default_model_name.return_value = "this-model"
+    ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
+    assert ops_test.model is None
+
+    await ops_test._setup_model()
+    mock_juju.controller.add_model.assert_called_with(
+        "this-model", cloud_name="this-cloud", config=None
+    )
+    assert ops_test.model == mock_juju.model
+    assert ops_test.model_full_name == "this-controller:this-model"
+    assert ops_test.cloud_name == "this-cloud"
+    assert ops_test.model_name == "this-model"
+    assert (
+        ops_test.keep_model is False
+    ), "Model shouldn't be kept if it wasn't automatically created"
+    assert len(ops_test.models) == 1
+
+
+@pytest.mark.parametrize("model_name", [None, "second-model"])
+async def test_fixture_create_model(
+    model_name, mock_juju, setup_request, tmp_path_factory
+):
+    setup_request.session.testsfailed = 0
+    ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
+    await ops_test._setup_model()
+    assert len(ops_test.models) == 1
+    first_model_key = ops_test.current_model
+    first_model = ops_test.model
+    first_tmp_path = ops_test.tmp_path
+
+    model = await ops_test.add_model(model_name)
+    second_model_key = ops_test.current_model
+
+    assert ops_test.model == model, "Adding model should have switch the model."
+    assert len(ops_test.models) == 2
+    if model_name is None:
+        generated = setup_request.module.__name__.replace("_", "-")
+        assert ops_test.model_name.startswith(generated)
+    else:
+        assert ops_test.model_name == model_name
+    assert (
+        first_model_key.model != second_model_key.model
+    ), "Model Names must be different"
+    assert (
+        first_model_key.cloud == second_model_key.cloud
+    ), "Clouds Names should be the same"
+    assert (
+        first_model_key.controller == second_model_key.controller
+    ), "Controller Names should be the same"
+    assert ops_test.tmp_path != first_tmp_path, "New tmp_path should be generated"
+    assert not ops_test.keep_model, "Created models shouldn't be kept"
+
+    assert (
+        ops_test.switch(first_model_key) == first_model
+    ), "Should switch to first model"
+    await ops_test.remove_model(second_model_key), "Should Complete"
+    assert len(ops_test.models) == 1, "Should now only manage one model"
+    assert (
+        ops_test.current_model == first_model_key
+    ), "Should have switched back to original model"

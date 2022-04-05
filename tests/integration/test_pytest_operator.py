@@ -62,6 +62,26 @@ class TestPlugin:
         crashdumps = set(ops_test.tmp_path.glob("juju-crashdump-*.tar.xz"))
         assert len(crashdumps) > 0, "no crash dump was found"
 
+    async def test_2_create_delete_new_model(self, ops_test):
+        assert ops_test.model.applications.keys() == {
+            "reactive-framework",
+            "operator-framework",
+        }
+        prior_model = ops_test.current_model
+
+        await ops_test.add_model()  # creates a new model and switch to it
+        assert not ops_test.model.applications  # ensure there's no applications in it
+        created_model = ops_test.current_model
+        # confirm they really are different models
+        assert created_model and created_model.model != prior_model.model
+        await ops_test.remove_model(created_model)  # remove the newly created model
+
+        ops_test.switch(prior_model)  # switch back to previous model
+        assert ops_test.model.applications.keys() == {
+            "reactive-framework",
+            "operator-framework",
+        }
+
 
 async def test_func(ops_test):
     assert ops_test.model
