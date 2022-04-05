@@ -18,7 +18,7 @@ from pathlib import Path
 from random import choices
 from string import ascii_lowercase, digits, hexdigits
 from timeit import default_timer as timer
-from typing import Iterable, Optional, MutableMapping, Mapping, Union
+from typing import Iterable, Optional, MutableMapping, Mapping
 from urllib.request import urlretrieve, urlopen
 from urllib.parse import urlencode
 from urllib.error import HTTPError
@@ -394,19 +394,10 @@ class OpsTest:
         self.current_model: Optional[ModelKey] = None
         self._models: MutableMapping[ModelKey, ModelState] = {}
 
-    def switch(
-        self, model: Union[ModelKey, str], cloud_name: Optional[str] = None
-    ) -> Model:
+    def switch(self, model_key: ModelKey) -> Model:
         """
         Analog to `juju switch` where the focus of the current model is moved.
         """
-        try:
-            model_key: ModelKey = model
-        except ValueError:
-            model_key = ModelKey(
-                self.controller_name, cloud_name or self.cloud_name, model
-            )
-
         if model_key in self.models:
             self.current_model = model_key
         else:
@@ -464,7 +455,7 @@ class OpsTest:
             return cloud
 
     @property
-    def keep_model(self):
+    def keep_model(self) -> bool:
         """Represents whether the current model should be kept after tests."""
         if self._init_keep_model:
             return True
@@ -472,13 +463,13 @@ class OpsTest:
         if model_state:
             return model_state.keep
 
-    def _generate_model_name(self):
+    def _generate_model_name(self) -> str:
         module_name = self.request.module.__name__.rpartition(".")[-1]
         suffix = "".join(choices(ascii_lowercase + digits, k=4))
         return f"{module_name.replace('_', '-')}-{suffix}"
 
     @cached_property
-    def default_model_name(self):
+    def default_model_name(self) -> str:
         return self._generate_model_name()
 
     async def run(self, *cmd, cwd=None, check=False, fail_msg=None):
@@ -532,6 +523,10 @@ class OpsTest:
             controller = Controller()
             await controller.connect(controller_name)
         if not cloud_name:
+            # if not provided, try the default cloud name
+            cloud_name = self._init_cloud_name
+        if not cloud_name:
+            # if not provided, use the controller's default cloud
             cloud_name = await controller.get_cloud()
         model_full_name = f"{controller_name}:{model_name}"
         log.info(f"Adding model {model_full_name} on cloud {cloud_name}")
@@ -656,13 +651,9 @@ class OpsTest:
             log.info("juju-crashdump command was not found.")
             return False
 
-    async def remove_model(
-        self,
-        model: Union[ModelKey, str],
-        cloud_name: Optional[str] = None,
-    ):
+    async def remove_model(self, model: ModelKey):
         previous_model = self.current_model
-        if not self.switch(model, cloud_name=cloud_name):
+        if not self.switch(model):
             return
 
         await self.log_model()
