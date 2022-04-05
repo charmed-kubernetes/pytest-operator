@@ -344,9 +344,6 @@ def mock_juju():
         juju.controller.controller_name = "this-controller"
         juju.controller.get_cloud = AsyncMock(return_value="this-cloud")
         juju.controller.add_model = AsyncMock(return_value=juju.model)
-        juju.controller.connect = AsyncMock()
-
-        juju.model.connect = AsyncMock()
         juju.model.get_controller = AsyncMock(return_value=juju.controller)
         yield juju
 
@@ -381,8 +378,9 @@ async def test_fixture_set_up_existing_model(
 
 
 @patch("pytest_operator.plugin.OpsTest.default_model_name", new_callable=PropertyMock)
+@patch("pytest_operator.plugin.OpsTest.juju", autospec=True)
 async def test_fixture_set_up_automatic_model(
-    mock_default_model_name, mock_juju, setup_request, tmp_path_factory
+    juju_cmd, mock_default_model_name, mock_juju, setup_request, tmp_path_factory
 ):
     mock_default_model_name.return_value = "this-model"
     ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
@@ -392,6 +390,7 @@ async def test_fixture_set_up_automatic_model(
     mock_juju.controller.add_model.assert_called_with(
         "this-model", cloud_name="this-cloud", config=None
     )
+    juju_cmd.assert_called_with(ops_test, "models")
     assert ops_test.model == mock_juju.model
     assert ops_test.model_full_name == "this-controller:this-model"
     assert ops_test.cloud_name == "this-cloud"
@@ -403,9 +402,11 @@ async def test_fixture_set_up_automatic_model(
 
 
 @pytest.mark.parametrize("model_name", [None, "second-model"])
-async def test_fixture_create_model(
-    model_name, mock_juju, setup_request, tmp_path_factory
+@patch("pytest_operator.plugin.OpsTest.juju", autospec=True)
+async def test_fixture_create_remove_model(
+    juju_cmd, model_name, mock_juju, setup_request, tmp_path_factory
 ):
+    juju_cmd.return_value = (0, "", "")
     setup_request.session.testsfailed = 0
     ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
     await ops_test._setup_model()
@@ -415,6 +416,7 @@ async def test_fixture_create_model(
     first_tmp_path = ops_test.tmp_path
 
     model = await ops_test.add_model(model_name)
+    juju_cmd.assert_called_with(ops_test, "models")
     second_model_key = ops_test.current_model
 
     assert ops_test.model == model, "Adding model should have switch the model."
