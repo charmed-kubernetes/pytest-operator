@@ -97,8 +97,8 @@ def pytest_addoption(parser: Parser):
 
 
 def pytest_load_initial_conftests(parser: Parser, args: List[str]) -> None:
-    know_args = parser.parse_known_args(args)
-    if know_args.no_deploy and know_args.model is None:
+    known_args = parser.parse_known_args(args)
+    if known_args.no_deploy and known_args.model is None:
         optparser = parser._getparser()
         optparser.error("must specify --model when using --no-deploy")
 
