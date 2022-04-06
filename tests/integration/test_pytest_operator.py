@@ -67,17 +67,22 @@ class TestPlugin:
             "reactive-framework",
             "operator-framework",
         }
-        prior_model = ops_test.current_model
+        prior_model = ops_test.model
 
-        await ops_test.add_model()  # creates a new model and switch to it
-        assert not ops_test.model.applications  # ensure there's no applications in it
-        created_model = ops_test.current_model
-        # confirm they really are different models
-        assert created_model and created_model.model != prior_model.model
-        await ops_test.remove_model(created_model)  # remove the newly created model
+        model_alias = "secondary"
+        new_model = await ops_test.add_model(model_alias)
+        with ops_test.model_context(model_alias) as model:
+            assert model is new_model, "model_context should yield the new model"
+            assert (
+                not model.applications
+            ), "There should be no applications in the model"
+            assert model is not prior_model, "Two models are different objects"
+            assert ops_test.model is model, "Should reference the context model"
+            await ops_test.remove_model(model_alias)  # remove the newly created model
+            assert ops_test.model is None, "Context Model reference is gone"
 
-        ops_test.switch(prior_model)  # switch back to previous model
-        assert ops_test.model.applications.keys() == {
+        assert ops_test.model is prior_model, "Should reference base model"
+        assert prior_model and prior_model.applications.keys() == {
             "reactive-framework",
             "operator-framework",
         }

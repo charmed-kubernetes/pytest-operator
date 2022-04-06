@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import dataclasses
 import grp
 import inspect
@@ -11,14 +12,13 @@ import shlex
 import subprocess
 import sys
 import textwrap
-from collections import namedtuple
 from functools import cached_property
 from fnmatch import fnmatch
 from pathlib import Path
 from random import choices
 from string import ascii_lowercase, digits, hexdigits
 from timeit import default_timer as timer
-from typing import Iterable, Optional, List, MutableMapping, Mapping
+from typing import Iterable, Optional, List, MutableMapping, Mapping, Generator, Union
 from urllib.request import urlretrieve, urlopen
 from urllib.parse import urlencode
 from urllib.error import HTTPError
@@ -49,6 +49,12 @@ def pytest_addoption(parser: Parser):
         action="store",
         help="Juju controller to use; if not provided, "
         "will use the current controller",
+    )
+    parser.addoption(
+        "--model-alias",
+        action="store",
+        help="Alias name used for the model created in by ops_test",
+        default="main",
     )
     parser.addoption(
         "--model",
@@ -348,18 +354,27 @@ class CharmStore:
         return local_file
 
 
-ModelKey = namedtuple("ModelKey", "controller, cloud, model")
-
-
 class ModelNotFoundError(Exception):
-    """Raise when switching to a model that doesn't exist."""
+    """Raise when referencing to a model that doesn't exist."""
+
+
+class ModelInUseError(Exception):
+    """Raise when trying to add a model alias which already exists."""
 
 
 @dataclasses.dataclass
 class ModelState:
     model: Model
-    tmp_path: Optional[Path]
     keep: bool
+    controller_name: str
+    cloud_name: Optional[str]
+    model_name: str
+    config: dict = None
+    tmp_path: Optional[Path] = None
+
+    @property
+    def full_name(self) -> str:
+        return f"{self.controller_name}:{self.model_name}"
 
 
 class OpsTest:
@@ -379,13 +394,14 @@ class OpsTest:
         self.destructive_mode = request.config.option.destructive_mode
 
         # Config options to determine first model specs used by tests
+        self._orig_model_alias = request.config.option.model_alias
         self._init_cloud_name = request.config.option.cloud
         self._init_model_name = request.config.option.model
         self._init_keep_model = request.config.option.keep_models
 
         # These may be modified by _setup_model
         self.controller_name = request.config.option.controller
-        self.model_config = request.config.option.model_config
+        self._init_model_config = request.config.option.model_config
 
         # Flag for enabling the juju-crashdump
         self.crash_dump = not request.config.option.no_crash_dump
@@ -396,26 +412,44 @@ class OpsTest:
         self._controller: Optional[Controller] = None
 
         # maintains a set of all models connected by this fixture
-        self.current_model: Optional[ModelKey] = None
-        self._models: MutableMapping[ModelKey, ModelState] = {}
+        self._current_alias = None
+        self._models: MutableMapping[str, ModelState] = {}
 
-    def switch(self, model_key: ModelKey) -> Model:
+    @contextlib.contextmanager
+    def model_context(self, alias: str) -> Generator[Model, None, None]:
         """
         Analog to `juju switch` where the focus of the current model is moved.
         """
-        if model_key in self.models:
-            self.current_model = model_key
+        prior = self.current_alias
+        model = self._switch(alias)
+        yield model
+        self._switch(prior)
+
+    def _switch(self, alias: Optional[str]) -> Model:
+        if alias is None:
+            self._current_alias = None
+        if alias in self.models:
+            self._current_alias = alias
         else:
-            raise ModelNotFoundError(f"{model_key} not found")
+            raise ModelNotFoundError(f"{alias} not found")
 
         return self.model
 
     @property
+    def current_alias(self) -> Optional[str]:
+        return self._current_alias
+
+    @property
+    def models(self) -> Mapping[str, ModelState]:
+        """Returns the dict of managed models by this fixture."""
+        return {k: dataclasses.replace(v) for k, v in self._models.items()}
+
+    @property
     def tmp_path(self) -> Path:
         tmp_path = self._global_tmp_path
-        current_state = self._models.get(self.current_model)
+        current_state = self._models.get(self.current_alias)
         if current_state and current_state.tmp_path is None:
-            tmp_path = self._tmp_path_factory.mktemp(self.current_model.model)
+            tmp_path = self._tmp_path_factory.mktemp(current_state.model_name)
             current_state.tmp_path = tmp_path
         elif current_state and current_state.tmp_path:
             tmp_path = current_state.tmp_path
@@ -423,50 +457,46 @@ class OpsTest:
             tmp_path = self._global_tmp_path = self._tmp_path_factory.mktemp(
                 self.default_model_name
             )
-
         log.info(f"Using tmp_path: {tmp_path}")
         return tmp_path
 
     @property
-    def models(self) -> Mapping[ModelKey, Model]:
-        """Returns the dict of managed models by this fixture."""
-        return {k: v.model for k, v in self._models.items()}
+    def model_config(self) -> Optional[dict]:
+        """Represents the config used when adding the model."""
+        current_state = self._models.get(self.current_alias)
+        return current_state.config if current_state else None
 
     @property
     def model(self) -> Optional[Model]:
         """Represents the current model."""
-        current_state = self._models.get(self.current_model)
+        current_state = self._models.get(self.current_alias)
         return current_state.model if current_state else None
 
     @property
     def model_full_name(self) -> Optional[str]:
         """Represents the current model's full name."""
-        if self.current_model:
-            controller, cloud, model = self.current_model
-            return f"{controller}:{model}"
+        current_state = self._models.get(self.current_alias)
+        return current_state.full_name if current_state else None
 
     @property
     def model_name(self) -> Optional[str]:
         """Represents the current model name."""
-        if self.current_model:
-            controller, cloud, model = self.current_model
-            return model
+        current_state = self._models.get(self.current_alias)
+        return current_state.model_name if current_state else None
 
     @property
     def cloud_name(self) -> Optional[str]:
         """Represents the current model's cloud name."""
-        if self.current_model:
-            controller, cloud, model = self.current_model
-            return cloud
+        current_state = self._models.get(self.current_alias)
+        return current_state.cloud_name if current_state else None
 
     @property
     def keep_model(self) -> bool:
         """Represents whether the current model should be kept after tests."""
         if self._init_keep_model:
             return True
-        model_state = self._models.get(self.current_model)
-        if model_state:
-            return model_state.keep
+        model_state = self._models.get(self.current_alias)
+        return model_state.keep if model_state else False
 
     def _generate_model_name(self) -> str:
         module_name = self.request.module.__name__.rpartition(".")[-1]
@@ -518,7 +548,7 @@ class OpsTest:
 
         return await self.run("juju", *args)
 
-    async def _add_model(self, controller_name, cloud_name, model_name):
+    async def _add_model(self, controller_name, cloud_name, model_name, **kwargs):
         """
         Creates a model used by the test framework which would normally be destroyed
         after the tests are run in the module.
@@ -536,73 +566,88 @@ class OpsTest:
         model_full_name = f"{controller_name}:{model_name}"
         log.info(f"Adding model {model_full_name} on cloud {cloud_name}")
 
-        model_config = None
-        if self.model_config:
-            model_config_file = Path(self.model_config)
-            if not model_config_file.exists():
-                log.error("model-config file %s doesn't exist", model_config_file)
-                raise FileNotFoundError(model_config_file)
-            else:
-                log.info("Loading model config from %s", model_config_file)
-                model_config = yaml.safe_load(model_config_file.read_text())
-
-        model_key = ModelKey(controller_name, cloud_name, model_name)
         model_keep = False
-        new_model = await controller.add_model(
-            model_name, cloud_name=cloud_name, config=model_config
-        )
+        model = await controller.add_model(model_name, cloud_name, **kwargs)
         # NB: This call to `juju models` is needed because libjuju's
         # `add_model` doesn't update the models.yaml cache that the Juju
         # CLI depends on with the model's UUID, which the CLI requires to
         # connect. Calling `juju models` beforehand forces the CLI to
         # update the cache from the controller.
         await self.juju("models")
-        return model_key, ModelState(new_model, None, model_keep)
+        state = ModelState(model, model_keep, controller_name, cloud_name, model_name)
+        state.config = await model.get_config()
+        return state
 
-    async def _connect_to_model(self, controller_name, model_name):
+    @staticmethod
+    async def _connect_to_model(controller_name, model_name):
         """
         Makes a reference to an existing model used by the test framework
         which will not be destroyed after the tests are run in the module.
         """
-        model_full_name = f"{controller_name}:{model_name}"
+        model = Model()
+        state = ModelState(model, True, controller_name, None, model_name)
         log.info(
-            "Connecting to existing model %s on unspecified cloud", model_full_name
+            "Connecting to existing model %s on unspecified cloud", state.full_name
         )
-        new_model = Model()
-        await new_model.connect(model_full_name)
-        model_key = ModelKey(controller_name, None, self._init_model_name)
-        model_keep = True  # don't clean up models we didn't create
-        return model_key, ModelState(new_model, None, model_keep)
+        await model.connect(state.full_name)
+        state.config = await model.get_config()
+        return state
+
+    @staticmethod
+    def read_model_config(
+        config_path_or_obj: Union[dict, str, bytes, os.PathLike, None]
+    ) -> Optional[dict]:
+        if isinstance(config_path_or_obj, dict):
+            return config_path_or_obj
+        model_config = None
+        if config_path_or_obj:
+            model_config_file = Path(config_path_or_obj)
+            if not model_config_file.exists():
+                log.error("model-config file %s doesn't exist", model_config_file)
+                raise FileNotFoundError(model_config_file)
+            else:
+                log.info("Loading model config from %s", model_config_file)
+                model_config = yaml.safe_load(model_config_file.read_text())
+        return model_config
 
     async def _setup_model(self):
         # TODO: We won't need this if Model.debug_log is implemented in libjuju
         self.jujudata = FileJujuData()
+        alias = self._orig_model_alias
         if not self.controller_name:
             self.controller_name = self.jujudata.current_controller()
         if not self._init_model_name:
-            model_key, model_state = await self._add_model(
-                self.controller_name, self._init_cloud_name, self.default_model_name
+            config = self.read_model_config(self._init_model_config)
+            model_state = await self._add_model(
+                self.controller_name,
+                self._init_cloud_name,
+                self.default_model_name,
+                config=config,
             )
         else:
-            model_key, model_state = await self._connect_to_model(
+            model_state = await self._connect_to_model(
                 self.controller_name, self._init_model_name
             )
 
         if not self._controller:
             self._controller = await model_state.model.get_controller()
 
-        self.current_model = model_key
-        self._models[model_key] = model_state
+        self._models[alias] = model_state
+        self._current_alias = alias
 
     async def add_model(
         self,
+        alias: str,
         model_name: Optional[str] = None,
         cloud_name: Optional[str] = None,
         create: bool = True,
+        **kwargs,
     ) -> Model:
         """
-        Create/Add new model into existing controller and switch to it.
+        Create/Add new model into existing controller.
 
+        @param str           alias     : alias to the model used only by opstest
+                                         to differentiate between models.
         @param Optional[str] model_name: name of the new model to add,
                                          None will craft a unique name
         @param Optional[str] cloud_name: name of the in which model is added,
@@ -610,19 +655,19 @@ class OpsTest:
         @param bool create: True: new model will be created
                             False: new model must already exist
         """
+        if alias in self._models:
+            raise ModelInUseError(f"Cannot add new model with alias '{alias}'")
+
         if create or not model_name:
-            cloud_name = cloud_name or self.current_model.cloud
+            cloud_name = cloud_name or self.cloud_name
             model_name = model_name or self._generate_model_name()
-            model_key, model_state = await self._add_model(
-                self.controller_name, cloud_name, model_name
+            model_state = await self._add_model(
+                self.controller_name, cloud_name, model_name, **kwargs
             )
         else:
-            model_key, model_state = await self._connect_to_model(
-                self.controller_name, model_name
-            )
-
-        self._models[model_key] = model_state
-        return self.switch(model_key)
+            model_state = await self._connect_to_model(self.controller_name, model_name)
+        self._models[alias] = model_state
+        return model_state.model
 
     async def log_model(self):
         """Log a summary of the status of the model."""
@@ -656,49 +701,45 @@ class OpsTest:
             log.info("juju-crashdump command was not found.")
             return False
 
-    async def remove_model(self, model: ModelKey):
-        previous_model = self.current_model
-        if not self.switch(model):
+    async def remove_model(self, alias: str):
+        if alias not in self.models:
             return
 
-        await self.log_model()
+        with self.model_context(alias) as model:
+            await self.log_model()
 
-        # NOTE (rgildein): Create juju-crashdump only if any tests failed,
-        # `juju-crashdump` flag is enabled and OpsTest.keep_model == False
-        if (
-            self.request.session.testsfailed > 0
-            and self.crash_dump
-            and self.keep_model is False
-        ):
-            await self.create_crash_dump()
+            # NOTE (rgildein): Create juju-crashdump only if any tests failed,
+            # `juju-crashdump` flag is enabled and OpsTest.keep_model == False
+            if (
+                self.request.session.testsfailed > 0
+                and self.crash_dump
+                and self.keep_model is False
+            ):
+                await self.create_crash_dump()
 
-        if not self.keep_model:
-            # Forcibly destroy machines in case any units are in error.
-            for machine in self.model.machines.values():
-                try:
-                    log.info(f"Destroying machine {machine.id}")
-                    await machine.destroy(force=True)
-                except DeadEntityException as e:
-                    log.warning(e)
-                    log.warning("Machine already dead, skipping")
-            await self.model.disconnect()
-            log.info(f"Destroying model {self.model_name}")
-            await self._controller.destroy_model(self.model_name)
-        else:
-            await self.model.disconnect()
+            if not self.keep_model:
+                # Forcibly destroy machines in case any units are in error.
+                for machine in model.machines.values():
+                    try:
+                        log.info(f"Destroying machine {machine.id}")
+                        await machine.destroy(force=True)
+                    except DeadEntityException as e:
+                        log.warning(e)
+                        log.warning("Machine already dead, skipping")
+                await model.disconnect()
+                log.info(f"Destroying model {self.model_name}")
+                await self._controller.destroy_model(self.model_name)
+            else:
+                await model.disconnect()
 
         # stop managing this model now
-        self._models.pop(self.current_model)
-        try:
-            self.switch(previous_model)
-        except ModelNotFoundError:
-            self.current_model = None
+        self._models.pop(alias)
 
     async def _cleanup_models(self):
         if not self.models:
             return
 
-        for models in self.models.keys():
+        for models in self.models:
             await self.remove_model(models)
 
         await self._controller.disconnect()

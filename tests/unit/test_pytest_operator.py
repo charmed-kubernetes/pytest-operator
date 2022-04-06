@@ -246,8 +246,12 @@ async def test_crash_dump_mode(monkeypatch, tmp_path_factory):
     model.machines.values.return_value = []
     model.disconnect = AsyncMock()
     ops_test._init_keep_model = None
-    ops_test.current_model = ("test", "local", "model")
-    ops_test._models = {ops_test.current_model: plugin.ModelState(model, None, False)}
+    ops_test._current_alias = "main"
+    ops_test._models = {
+        ops_test.current_alias: plugin.ModelState(
+            model, False, "test", "local", "model"
+        )
+    }
     ops_test.crash_dump_output = None
     ops_test.log_model = AsyncMock()
     ops_test._controller = AsyncMock()
@@ -261,8 +265,12 @@ async def test_crash_dump_mode(monkeypatch, tmp_path_factory):
     mock_run.reset_mock()
 
     # 1 tests failed
-    ops_test.current_model = ("test", "local", "model")
-    ops_test._models = {ops_test.current_model: plugin.ModelState(model, None, False)}
+    ops_test._current_alias = "main"
+    ops_test._models = {
+        ops_test.current_alias: plugin.ModelState(
+            model, False, "test", "local", "model"
+        )
+    }
     mock_request.session.testsfailed = 1
 
     await ops_test._cleanup_model()
@@ -388,7 +396,7 @@ async def test_fixture_set_up_automatic_model(
 
     await ops_test._setup_model()
     mock_juju.controller.add_model.assert_called_with(
-        "this-model", cloud_name="this-cloud", config=None
+        "this-model", "this-cloud", config=None
     )
     juju_cmd.assert_called_with(ops_test, "models")
     assert ops_test.model == mock_juju.model
@@ -411,38 +419,56 @@ async def test_fixture_create_remove_model(
     ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
     await ops_test._setup_model()
     assert len(ops_test.models) == 1
-    first_model_key = ops_test.current_model
-    first_model = ops_test.model
-    first_tmp_path = ops_test.tmp_path
+    first_model = SimpleNamespace(
+        alias=ops_test.current_alias,
+        model=ops_test.model,
+        controller_name=ops_test.controller_name,
+        model_name=ops_test.model_name,
+        cloud_name=ops_test.cloud_name,
+        tmp_path=ops_test.tmp_path,
+    )
 
-    model = await ops_test.add_model(model_name)
+    test_alias = "second"
+    await ops_test.add_model(test_alias, model_name=model_name)
     juju_cmd.assert_called_with(ops_test, "models")
-    second_model_key = ops_test.current_model
-
-    assert ops_test.model == model, "Adding model should have switch the model."
+    assert (
+        ops_test.current_alias != "second"
+    ), "Adding model shouldn't switch the model."
     assert len(ops_test.models) == 2
+
+    # Now let's switch into it
+    with ops_test.model_context(test_alias):
+        test_model = SimpleNamespace(
+            alias=ops_test.current_alias,
+            model=ops_test.model,
+            controller_name=ops_test.controller_name,
+            model_name=ops_test.model_name,
+            cloud_name=ops_test.cloud_name,
+            tmp_path=ops_test.tmp_path,
+            keep_model=ops_test.keep_model,
+        )
+    assert (
+        ops_test.current_alias == first_model.alias
+    ), "Should have switched back to original model"
+    assert (
+        ops_test.model_name == first_model.model_name
+    ), "Outside the context, should return to the main model"
+
     if model_name is None:
         generated = setup_request.module.__name__.replace("_", "-")
-        assert ops_test.model_name.startswith(generated)
+        assert test_model.model_name.startswith(generated)
     else:
-        assert ops_test.model_name == model_name
+        assert test_model.model_name == model_name
+    assert first_model.alias != test_alias, "Model Alias must be different"
     assert (
-        first_model_key.model != second_model_key.model
-    ), "Model Names must be different"
-    assert (
-        first_model_key.cloud == second_model_key.cloud
+        first_model.cloud_name == test_model.cloud_name
     ), "Clouds Names should be the same"
     assert (
-        first_model_key.controller == second_model_key.controller
+        first_model.controller_name == test_model.controller_name
     ), "Controller Names should be the same"
-    assert ops_test.tmp_path != first_tmp_path, "New tmp_path should be generated"
-    assert not ops_test.keep_model, "Created models shouldn't be kept"
-
     assert (
-        ops_test.switch(first_model_key) == first_model
-    ), "Should switch to first model"
-    await ops_test.remove_model(second_model_key), "Should Complete"
+        first_model.tmp_path != test_model.tmp_path
+    ), "New tmp_path should be generated"
+    assert not test_model.keep_model, "Created models shouldn't be kept"
+    await ops_test.remove_model(test_alias)
     assert len(ops_test.models) == 1, "Should now only manage one model"
-    assert (
-        ops_test.current_model == first_model_key
-    ), "Should have switched back to original model"
