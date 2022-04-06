@@ -16,7 +16,7 @@ from pathlib import Path
 from random import choices
 from string import ascii_lowercase, digits, hexdigits
 from timeit import default_timer as timer
-from typing import Iterable, Optional
+from typing import Iterable, Optional, List
 from urllib.request import urlretrieve, urlopen
 from urllib.parse import urlencode
 from urllib.error import HTTPError
@@ -26,6 +26,8 @@ import jinja2
 import pytest
 import pytest_asyncio.plugin
 import yaml
+from _pytest.config import Config
+from _pytest.config.argparsing import Parser
 from juju.client.jujudata import FileJujuData
 from juju.controller import Controller
 from juju.exceptions import DeadEntityException
@@ -34,7 +36,7 @@ from juju.model import Model
 log = logging.getLogger(__name__)
 
 
-def pytest_addoption(parser):
+def pytest_addoption(parser: Parser):
     parser.addoption(
         "--cloud",
         action="store",
@@ -91,13 +93,16 @@ def pytest_addoption(parser):
         "* ignored if `--model` supplied"
         "* if the specified file doesn't exist, an error will be raised.",
     )
-    arg_parser = parser._getparser()
-    args = arg_parser.parse_args()
-    if args.no_deploy and args.model is None:
-        arg_parser.error("must specify --model when using --no-deploy")
 
 
-def pytest_configure(config):
+def pytest_load_initial_conftests(parser: Parser, args: List[str]) -> None:
+    known_args = parser.parse_known_args(args)
+    if known_args.no_deploy and known_args.model is None:
+        optparser = parser._getparser()
+        optparser.error("must specify --model when using --no-deploy")
+
+
+def pytest_configure(config: Config):
     config.addinivalue_line("markers", "abort_on_fail")
     config.addinivalue_line("markers", "skip_if_deployed")
     # These need to be fixed in libjuju and just clutter things up for tests using this.
