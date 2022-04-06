@@ -314,11 +314,11 @@ def test_no_deploy_mode(pytester):
     """
     )
     # test without --no-deploy option
-    result = pytester.runpytest_subprocess("--asyncio-mode=auto")
+    result = pytester.runpytest("--asyncio-mode=auto")
     result.assert_outcomes(passed=3)
 
     # test with --no-deploy, but without --model option
-    result = pytester.runpytest_subprocess("--no-deploy", "--asyncio-mode=auto")
+    result = pytester.runpytest("--no-deploy", "--asyncio-mode=auto")
     assert any(
         "error: must specify --model when using --no-deploy" in errline
         for errline in result.errlines
@@ -326,7 +326,7 @@ def test_no_deploy_mode(pytester):
     assert result.outlines == []
 
     # test with --no-deploy and --model
-    result = pytester.runpytest_subprocess(
+    result = pytester.runpytest(
         "--no-deploy", "--model", "test-model", "--asyncio-mode=auto"
     )
     result.assert_outcomes(passed=2, skipped=1)
