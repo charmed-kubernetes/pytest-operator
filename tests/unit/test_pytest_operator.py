@@ -181,7 +181,6 @@ async def test_plugin_build_resources(tmp_path_factory):
     ops_test = plugin.OpsTest(Mock(**{"module.__name__": "test"}), tmp_path_factory)
     ops_test.jujudata = Mock()
     ops_test.jujudata.path = ""
-    # ops_test.model_full_name = ops_test.default_model_name
 
     with pytest.raises(FileNotFoundError):
         build_script = Path("tests") / "data" / "build_resources_does_not_exist.sh"
