@@ -255,6 +255,7 @@ async def test_crash_dump_mode(monkeypatch, tmp_path_factory):
     ops_test.crash_dump_output = None
     ops_test.log_model = AsyncMock()
     ops_test._controller = AsyncMock()
+    ops_test._model_gone = AsyncMock(return_value=None)
 
     # 0 tests failed
     mock_request.session.testsfailed = 0
@@ -352,6 +353,7 @@ def mock_juju():
         juju.controller.controller_name = "this-controller"
         juju.controller.get_cloud = AsyncMock(return_value="this-cloud")
         juju.controller.add_model = AsyncMock(return_value=juju.model)
+        juju.controller.model_uuids = AsyncMock(return_value={})
         juju.model.get_controller = AsyncMock(return_value=juju.controller)
         yield juju
 

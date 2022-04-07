@@ -539,14 +539,14 @@ class OpsTest:
 
     _run = run  # backward compatibility alias
 
-    async def juju(self, *args):
+    async def juju(self, *args, **kwargs):
         """Runs a Juju CLI command.
 
         Useful for cases where python-libjuju sees things differently than the Juju CLI.
         Will set `JUJU_MODEL`, so manually passing in `-m model-name` is unnecessary.
         """
 
-        return await self.run("juju", *args)
+        return await self.run("juju", *args, **kwargs)
 
     async def _add_model(self, controller_name, cloud_name, model_name, **kwargs):
         """
@@ -701,7 +701,22 @@ class OpsTest:
             log.info("juju-crashdump command was not found.")
             return False
 
-    async def remove_model(self, alias: str):
+    async def _model_gone(self, model_name: str):
+        models = await self._controller.model_uuids()
+        while model_name in models:
+            await asyncio.sleep(5.0)
+            models = await self._controller.model_uuids()
+
+    async def remove_model(
+        self, alias: str, timeout: Optional[Union[float, int]] = None
+    ):
+        """
+        Remove a model and wait for it to be removed from the controller.
+        If the model should be kept, ops_tests forgets about this model immediately
+
+        @param                   str alias: alias of the model
+        @param Optional[float,int] timeout: how long to wait for it to be removed
+        """
         if alias not in self.models:
             return
 
@@ -729,10 +744,15 @@ class OpsTest:
                 await model.disconnect()
                 log.info(f"Destroying model {self.model_name}")
                 await self._controller.destroy_model(self.model_name)
+                log.info(f"Waiting on model teardown {self.model_name}...")
+                await asyncio.wait_for(
+                    self._model_gone(self.model_name), timeout=timeout
+                )
             else:
                 await model.disconnect()
 
         # stop managing this model now
+        log.info(f"Forgetting {alias}...")
         self._models.pop(alias)
 
     async def _cleanup_models(self):
