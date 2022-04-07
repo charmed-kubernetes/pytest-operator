@@ -53,7 +53,7 @@ def pytest_addoption(parser: Parser):
     parser.addoption(
         "--model-alias",
         action="store",
-        help="Alias name used for the model created in by ops_test",
+        help="Alias name used for the model created by ops_test",
         default="main",
     )
     parser.addoption(
