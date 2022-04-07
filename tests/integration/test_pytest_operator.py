@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-
 log = logging.getLogger(__name__)
 
 
@@ -106,6 +105,9 @@ async def test_run(ops_test):
     with pytest.raises(AssertionError) as exc_info:
         await ops_test.run("/bin/false", check=True, fail_msg="test")
     assert str(exc_info.value) == "test (1): "
+
+    stdin, revd = b"hello world", "dlrow olleh"
+    assert await ops_test.run("/usr/bin/rev", stdin=stdin) == (0, revd, "")
 
 
 @pytest.mark.abort_on_fail(abort_on_xfail=True)

@@ -18,7 +18,16 @@ from pathlib import Path
 from random import choices
 from string import ascii_lowercase, digits, hexdigits
 from timeit import default_timer as timer
-from typing import Iterable, Optional, List, MutableMapping, Mapping, Generator, Union
+from typing import (
+    Generator,
+    Iterable,
+    List,
+    MutableMapping,
+    Mapping,
+    Optional,
+    Tuple,
+    Union,
+)
 from urllib.request import urlretrieve, urlopen
 from urllib.parse import urlencode
 from urllib.error import HTTPError
@@ -369,7 +378,7 @@ class ModelState:
     controller_name: str
     cloud_name: Optional[str]
     model_name: str
-    config: dict = None
+    config: Optional[dict] = None
     tmp_path: Optional[Path] = None
 
     @property
@@ -447,7 +456,7 @@ class OpsTest:
     @property
     def tmp_path(self) -> Path:
         tmp_path = self._global_tmp_path
-        current_state = self._models.get(self.current_alias)
+        current_state = self.current_alias and self._models.get(self.current_alias)
         if current_state and current_state.tmp_path is None:
             tmp_path = self._tmp_path_factory.mktemp(current_state.model_name)
             current_state.tmp_path = tmp_path
@@ -463,31 +472,31 @@ class OpsTest:
     @property
     def model_config(self) -> Optional[dict]:
         """Represents the config used when adding the model."""
-        current_state = self._models.get(self.current_alias)
+        current_state = self.current_alias and self._models.get(self.current_alias)
         return current_state.config if current_state else None
 
     @property
     def model(self) -> Optional[Model]:
         """Represents the current model."""
-        current_state = self._models.get(self.current_alias)
+        current_state = self.current_alias and self._models.get(self.current_alias)
         return current_state.model if current_state else None
 
     @property
     def model_full_name(self) -> Optional[str]:
         """Represents the current model's full name."""
-        current_state = self._models.get(self.current_alias)
+        current_state = self.current_alias and self._models.get(self.current_alias)
         return current_state.full_name if current_state else None
 
     @property
     def model_name(self) -> Optional[str]:
         """Represents the current model name."""
-        current_state = self._models.get(self.current_alias)
+        current_state = self.current_alias and self._models.get(self.current_alias)
         return current_state.model_name if current_state else None
 
     @property
     def cloud_name(self) -> Optional[str]:
         """Represents the current model's cloud name."""
-        current_state = self._models.get(self.current_alias)
+        current_state = self.current_alias and self._models.get(self.current_alias)
         return current_state.cloud_name if current_state else None
 
     @property
@@ -495,8 +504,8 @@ class OpsTest:
         """Represents whether the current model should be kept after tests."""
         if self._init_keep_model:
             return True
-        model_state = self._models.get(self.current_alias)
-        return model_state.keep if model_state else False
+        current_state = self.current_alias and self._models.get(self.current_alias)
+        return current_state.keep if current_state else False
 
     def _generate_model_name(self) -> str:
         module_name = self.request.module.__name__.rpartition(".")[-1]
@@ -507,12 +516,23 @@ class OpsTest:
     def default_model_name(self) -> str:
         return self._generate_model_name()
 
-    async def run(self, *cmd, cwd=None, check=False, fail_msg=None):
+    async def run(
+        self,
+        *cmd: str,
+        cwd: Optional[os.PathLike] = None,
+        check: bool = False,
+        fail_msg: Optional[str] = None,
+        stdin: Optional[bytes] = None,
+    ) -> Tuple[Optional[int], str, str]:
         """Asynchronously run a subprocess command.
 
-        If `check` is False, returns a tuple of the return code, stdout, and
-        stderr (decoded as utf8). Otherwise, calls `pytest.fail` with
-        `fail_msg` and relevant command info.
+        @param                   str cmd: command to execute within a juju context
+        @param Optional[os.Pathlink] cwd: current working directory
+        @param                bool check: if False, returns a tuple (rc, stdout, stderr)
+                                          if True,  calls `pytest.fail` with `fail_msg`
+                                          and relevant command information
+        @param Optional[str]    fail_msg: Message to present if check=True and rc != 0
+        @param Optional[bytes]     stdin: Bytes read by stdin of the called process
         """
         env = {**os.environ}
         if self.jujudata:
@@ -522,13 +542,15 @@ class OpsTest:
 
         proc = await asyncio.create_subprocess_exec(
             *(str(c) for c in cmd),
-            cwd=str(cwd or "."),
+            stdin=asyncio.subprocess.PIPE if isinstance(stdin, bytes) else None,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            cwd=str(cwd or "."),
             env=env,
         )
-        stdout, stderr = await proc.communicate()
-        stdout, stderr = stdout.decode("utf8"), stderr.decode("utf8")
+
+        _stdout, _stderr = await proc.communicate(input=stdin)
+        stdout, stderr = _stdout.decode("utf8"), _stderr.decode("utf8")
         if check and proc.returncode != 0:
             if fail_msg is None:
                 fail_msg = f"Command {list(cmd)} failed"
@@ -595,7 +617,7 @@ class OpsTest:
 
     @staticmethod
     def read_model_config(
-        config_path_or_obj: Union[dict, str, bytes, os.PathLike, None]
+        config_path_or_obj: Union[dict, str, os.PathLike, None]
     ) -> Optional[dict]:
         if isinstance(config_path_or_obj, dict):
             return config_path_or_obj
@@ -701,7 +723,9 @@ class OpsTest:
             log.info("juju-crashdump command was not found.")
             return False
 
-    async def _model_gone(self, model_name: str):
+    async def _model_gone(self, model_name: Optional[str]):
+        if not model_name or not self._controller:
+            return
         models = await self._controller.model_uuids()
         while model_name in models:
             await asyncio.sleep(5.0)
@@ -717,7 +741,12 @@ class OpsTest:
         @param                   str alias: alias of the model
         @param Optional[float,int] timeout: how long to wait for it to be removed
         """
+        if not self._controller:
+            log.error("No access to controller, skipping...")
+            return
+
         if alias not in self.models:
+            log.warning(f"No access to model alias {alias}, skipping...")
             return
 
         with self.model_context(alias) as model:
@@ -955,7 +984,7 @@ class OpsTest:
         """
 
         charm_name = (f"{owner}-" if owner else "") + self._charm_name(built_charm)
-        downloader = Charmhub(charm_name, channel)
+        downloader: Union[Charmhub, CharmStore] = Charmhub(charm_name, channel)
         if not downloader.exists:
             charm_name = (f"~{owner}/" if owner else "") + self._charm_name(built_charm)
             downloader = CharmStore(charm_name, channel)
@@ -1008,7 +1037,7 @@ class OpsTest:
         if serial:
             cmd += ["--serial"]
 
-        cmd += ["--", "-m", self.model_name] + list(extra_args)
+        cmd += ["--"] + list(extra_args)
 
         log.info(
             "Deploying (and possibly building) bundle using juju-bundle command:"
