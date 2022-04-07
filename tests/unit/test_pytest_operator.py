@@ -364,6 +364,7 @@ def setup_request(request, mock_juju):
     mock_request.config.option.controller = mock_juju.controller.controller_name
     mock_request.config.option.model = None
     mock_request.config.option.cloud = None
+    mock_request.config.option.model_alias = "main"
     mock_request.config.option.model_config = None
     mock_request.config.option.keep_models = False
     yield mock_request
@@ -391,29 +392,30 @@ async def test_fixture_set_up_existing_model(
 async def test_fixture_set_up_automatic_model(
     juju_cmd, mock_default_model_name, mock_juju, setup_request, tmp_path_factory
 ):
-    mock_default_model_name.return_value = "this-model"
+    model_name = "this-auto-generated-model-name"
+    mock_default_model_name.return_value = model_name
     ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
     assert ops_test.model is None
 
     await ops_test._setup_model()
     mock_juju.controller.add_model.assert_called_with(
-        "this-model", "this-cloud", config=None
+        model_name, "this-cloud", config=None
     )
     juju_cmd.assert_called_with(ops_test, "models")
     assert ops_test.model == mock_juju.model
-    assert ops_test.model_full_name == "this-controller:this-model"
+    assert ops_test.model_full_name == f"this-controller:{model_name}"
     assert ops_test.cloud_name == "this-cloud"
-    assert ops_test.model_name == "this-model"
-    assert (
-        ops_test.keep_model is False
-    ), "Model shouldn't be kept if it wasn't automatically created"
+    assert ops_test.model_name == model_name
+    # Don't keep a model if it's automatically generated
+    assert ops_test.keep_model is False
     assert len(ops_test.models) == 1
 
 
-@pytest.mark.parametrize("model_name", [None, "second-model"])
+@pytest.mark.parametrize("model_name", [None, "alt-model"])
+@pytest.mark.parametrize("cloud_name", [None, "alt-cloud"])
 @patch("pytest_operator.plugin.OpsTest.juju", autospec=True)
 async def test_fixture_create_remove_model(
-    juju_cmd, model_name, mock_juju, setup_request, tmp_path_factory
+    juju_cmd, model_name, cloud_name, mock_juju, setup_request, tmp_path_factory
 ):
     juju_cmd.return_value = (0, "", "")
     setup_request.session.testsfailed = 0
@@ -429,12 +431,12 @@ async def test_fixture_create_remove_model(
         tmp_path=ops_test.tmp_path,
     )
 
-    test_alias = "second"
-    await ops_test.add_model(test_alias, model_name=model_name)
+    test_alias = "model-alias"
+    await ops_test.add_model(test_alias, model_name=model_name, cloud_name=cloud_name)
     juju_cmd.assert_called_with(ops_test, "models")
-    assert (
-        ops_test.current_alias != "second"
-    ), "Adding model shouldn't switch the model."
+
+    # Adding a model doesn't switch the current model.
+    assert ops_test.current_alias == "main"
     assert len(ops_test.models) == 2
 
     # Now let's switch into it
@@ -448,12 +450,17 @@ async def test_fixture_create_remove_model(
             tmp_path=ops_test.tmp_path,
             keep_model=ops_test.keep_model,
         )
-    assert (
-        ops_test.current_alias == first_model.alias
-    ), "Should have switched back to original model"
-    assert (
-        ops_test.model_name == first_model.model_name
-    ), "Outside the context, should return to the main model"
+        # Within this context the current alias is updated
+        assert ops_test.current_alias == test_alias
+
+    # leaving this context, current alias switches back to 'main'
+    assert ops_test.current_alias == "main"
+    # And all properties reflect the main model
+    assert ops_test.model_name == first_model.model_name
+    assert ops_test.model == first_model.model
+    assert ops_test.cloud_name == first_model.cloud_name
+    assert ops_test.controller_name == first_model.controller_name
+    assert ops_test.tmp_path == first_model.tmp_path
 
     if model_name is None:
         generated = setup_request.module.__name__.replace("_", "-")
@@ -461,15 +468,26 @@ async def test_fixture_create_remove_model(
     else:
         assert test_model.model_name == model_name
     assert first_model.alias != test_alias, "Model Alias must be different"
-    assert (
-        first_model.cloud_name == test_model.cloud_name
-    ), "Clouds Names should be the same"
-    assert (
-        first_model.controller_name == test_model.controller_name
-    ), "Controller Names should be the same"
-    assert (
-        first_model.tmp_path != test_model.tmp_path
-    ), "New tmp_path should be generated"
-    assert not test_model.keep_model, "Created models shouldn't be kept"
+
+    if cloud_name is None:
+        # cloud-names should match if cloud-name is None
+        assert first_model.cloud_name == test_model.cloud_name
+
+    # controller-names should match
+    assert first_model.controller_name == test_model.controller_name
+
+    # New tmp_path should be generated
+    assert first_model.tmp_path != test_model.tmp_path
+
+    # Created models shouldn't be kept
+    assert not test_model.keep_model
+
     await ops_test.remove_model(test_alias)
-    assert len(ops_test.models) == 1, "Should now only manage one model"
+
+    # Should be back to managing only one model
+    assert len(ops_test.models) == 1
+
+    # Ensure switching to that context fails
+    with pytest.raises(plugin.ModelNotFoundError):
+        with ops_test.model_context(test_alias):
+            pass
