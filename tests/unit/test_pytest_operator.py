@@ -387,6 +387,24 @@ async def test_fixture_set_up_existing_model(
     assert len(ops_test.models) == 1
 
 
+@patch("pytest_operator.plugin.OpsTest.forget_model")
+async def test_fixture_cleanup_multi_model(
+    mock_forget_model, mock_juju, setup_request, tmp_path_factory
+):
+    ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
+    await ops_test._setup_model()
+    await ops_test.track_model("secondary")
+    assert len(ops_test.models) == 2
+    await ops_test._cleanup_models()
+    mock_forget_model.assert_has_calls(
+        [
+            call("secondary"),
+            call("main"),
+        ],
+        any_order=False,
+    )
+
+
 @patch("pytest_operator.plugin.OpsTest.default_model_name", new_callable=PropertyMock)
 @patch("pytest_operator.plugin.OpsTest.juju", autospec=True)
 async def test_fixture_set_up_automatic_model(

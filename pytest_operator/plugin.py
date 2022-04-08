@@ -12,6 +12,7 @@ import shlex
 import subprocess
 import sys
 import textwrap
+from collections import OrderedDict
 from functools import cached_property
 from fnmatch import fnmatch
 from pathlib import Path
@@ -421,8 +422,9 @@ class OpsTest:
         self._controller: Optional[Controller] = None
 
         # maintains a set of all models connected by this fixture
+        # use an OrderedDict so that the first model made
         self._current_alias = None
-        self._models: MutableMapping[str, ModelState] = {}
+        self._models: MutableMapping[str, ModelState] = OrderedDict()
 
     @contextlib.contextmanager
     def model_context(self, alias: str) -> Generator[Model, None, None]:
@@ -431,14 +433,21 @@ class OpsTest:
         """
         prior = self.current_alias
         model = self._switch(alias)
-        yield model
-        self._switch(prior)
+        try:
+            yield model
+        finally:
+            # if the there's a failure after yielding, don't fail to
+            # switch back to the prior alias but still raise whatever
+            # error condition occurred through the context
+            self._switch(prior, raise_not_found=False)
 
-    def _switch(self, alias: Optional[str]) -> Model:
+    def _switch(self, alias: Optional[str], raise_not_found=True) -> Model:
         if alias is None:
             self._current_alias = None
-        if alias in self.models:
+        elif alias in self._models:
             self._current_alias = alias
+        elif not raise_not_found:
+            self._current_alias = None
         else:
             raise ModelNotFoundError(f"{alias} not found")
 
@@ -784,12 +793,16 @@ class OpsTest:
         # stop managing this model now
         log.info(f"Forgetting {alias}...")
         self._models.pop(alias)
+        if alias is self.current_alias:
+            self._current_alias = None
 
     async def _cleanup_models(self):
         if not self.models:
             return
 
-        for models in self.models:
+        # remove models from most recently made, to first made
+        aliases = list(reversed(self._models.keys()))
+        for models in aliases:
             await self.forget_model(models)
 
         await self._controller.disconnect()
