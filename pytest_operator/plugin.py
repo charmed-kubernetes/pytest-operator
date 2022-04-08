@@ -657,7 +657,7 @@ class OpsTest:
         self._models[alias] = model_state
         self._current_alias = alias
 
-    async def add_model(
+    async def track_model(
         self,
         alias: str,
         model_name: Optional[str] = None,
@@ -666,7 +666,7 @@ class OpsTest:
         **kwargs,
     ) -> Model:
         """
-        Create/Add new model into existing controller.
+        Track a new or existing model in the existing controller.
 
         @param str           alias     : alias to the model used only by opstest
                                          to differentiate between models.
@@ -731,12 +731,13 @@ class OpsTest:
             await asyncio.sleep(5.0)
             models = await self._controller.model_uuids()
 
-    async def remove_model(
+    async def forget_model(
         self, alias: str, timeout: Optional[Union[float, int]] = None
     ):
         """
-        Remove a model and wait for it to be removed from the controller.
-        If the model should be kept, ops_tests forgets about this model immediately
+        Forget a model and wait for it to be removed from the controller.
+        If the model is marked as kept, ops_tests forgets about this model immediately.
+        If the model is not marked as kept, ops_test will destroy the model.
 
         @param                   str alias: alias of the model
         @param Optional[float,int] timeout: how long to wait for it to be removed
@@ -789,7 +790,7 @@ class OpsTest:
             return
 
         for models in self.models:
-            await self.remove_model(models)
+            await self.forget_model(models)
 
         await self._controller.disconnect()
 

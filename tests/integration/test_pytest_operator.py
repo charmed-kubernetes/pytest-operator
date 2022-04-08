@@ -69,7 +69,8 @@ class TestPlugin:
         prior_model = ops_test.model
 
         model_alias = "secondary"
-        new_model = await ops_test.add_model(model_alias)
+        # create a new model
+        new_model = await ops_test.track_model(model_alias)
         with ops_test.model_context(model_alias) as model:
             assert model is new_model, "model_context should yield the new model"
             assert (
@@ -77,7 +78,7 @@ class TestPlugin:
             ), "There should be no applications in the model"
             assert model is not prior_model, "Two models are different objects"
             assert ops_test.model is model, "Should reference the context model"
-            await ops_test.remove_model(model_alias)  # remove the newly created model
+            await ops_test.forget_model(model_alias)  # removes the newly created model
             assert ops_test.model is None, "Context Model reference is gone"
 
         assert ops_test.model is prior_model, "Should reference base model"

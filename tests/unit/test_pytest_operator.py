@@ -432,7 +432,7 @@ async def test_fixture_create_remove_model(
     )
 
     test_alias = "model-alias"
-    await ops_test.add_model(test_alias, model_name=model_name, cloud_name=cloud_name)
+    await ops_test.track_model(test_alias, model_name=model_name, cloud_name=cloud_name)
     juju_cmd.assert_called_with(ops_test, "models")
 
     # Adding a model doesn't switch the current model.
@@ -482,7 +482,7 @@ async def test_fixture_create_remove_model(
     # Created models shouldn't be kept
     assert not test_model.keep_model
 
-    await ops_test.remove_model(test_alias)
+    await ops_test.forget_model(test_alias)
 
     # Should be back to managing only one model
     assert len(ops_test.models) == 1
