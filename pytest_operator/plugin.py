@@ -42,6 +42,7 @@ from _pytest.config import Config
 from _pytest.config.argparsing import Parser
 from juju.client.jujudata import FileJujuData
 from juju.exceptions import DeadEntityException
+from juju.errors import JujuError
 from juju.model import Model, Controller
 
 log = logging.getLogger(__name__)
@@ -580,7 +581,9 @@ class OpsTest:
 
         return await self.run("juju", *args, **kwargs)
 
-    async def _add_model(self, controller_name, cloud_name, model_name, **kwargs):
+    async def _add_model(
+        self, controller_name, cloud_name, model_name, keep=False, **kwargs
+    ):
         """
         Creates a model used by the test framework which would normally be destroyed
         after the tests are run in the module.
@@ -598,7 +601,6 @@ class OpsTest:
         model_full_name = f"{controller_name}:{model_name}"
         log.info(f"Adding model {model_full_name} on cloud {cloud_name}")
 
-        model_keep = False
         model = await controller.add_model(model_name, cloud_name, **kwargs)
         # NB: This call to `juju models` is needed because libjuju's
         # `add_model` doesn't update the models.yaml cache that the Juju
@@ -606,18 +608,25 @@ class OpsTest:
         # connect. Calling `juju models` beforehand forces the CLI to
         # update the cache from the controller.
         await self.juju("models")
-        state = ModelState(model, model_keep, controller_name, cloud_name, model_name)
+        state = ModelState(model, keep, controller_name, cloud_name, model_name)
         state.config = await model.get_config()
         return state
 
+    async def _model_exists(self, model_name: str) -> bool:
+        """
+        returns True when the model_name exists in the model.
+        """
+        all_models = await self._controller.list_models()
+        return model_name in all_models
+
     @staticmethod
-    async def _connect_to_model(controller_name, model_name):
+    async def _connect_to_model(controller_name, model_name, keep=True):
         """
         Makes a reference to an existing model used by the test framework
         which will not be destroyed after the tests are run in the module.
         """
         model = Model()
-        state = ModelState(model, True, controller_name, None, model_name)
+        state = ModelState(model, keep, controller_name, None, model_name)
         log.info(
             "Connecting to existing model %s on unspecified cloud", state.full_name
         )
@@ -649,6 +658,7 @@ class OpsTest:
         if not self.controller_name:
             self.controller_name = self.jujudata.current_controller()
         if not self._init_model_name:
+            # no --model flag specified, automatically generate a model
             config = self.read_model_config(self._init_model_config)
             model_state = await self._add_model(
                 self.controller_name,
@@ -657,6 +667,7 @@ class OpsTest:
                 config=config,
             )
         else:
+            # --model flag specified, reuse existing model and set keep flag
             model_state = await self._connect_to_model(
                 self.controller_name, self._init_model_name
             )
@@ -672,32 +683,60 @@ class OpsTest:
         alias: str,
         model_name: Optional[str] = None,
         cloud_name: Optional[str] = None,
-        create: bool = True,
+        use_existing: Optional[bool] = None,
+        keep: Optional[bool] = None,
         **kwargs,
     ) -> Model:
         """
         Track a new or existing model in the existing controller.
 
-        @param str           alias     : alias to the model used only by opstest
+        @param str           alias     : alias to the model used only by ops_test
                                          to differentiate between models.
-        @param Optional[str] model_name: name of the new model to add,
+        @param Optional[str] model_name: name of the new model to track,
                                          None will craft a unique name
-        @param Optional[str] cloud_name: name of the in which model is added,
+        @param Optional[str] cloud_name: cloud name in which to add a new model,
                                          None will use current cloud
-        @param bool create: True: new model will be created
-                            False: new model must already exist
+        @param Optional[bool] use_existing:
+               None:  True if model_name exists on this controller
+               False: create a new model and keep=False, unless keep=True explicitly set
+               True:  connect to a model and keep=True, unless keep=False explicitly set
+        @param Optional[bool] keep:
+               None:  follows the value of use_existing
+               False: tracked model is destroyed at tests end
+               True:  tracked model remains once tests complete
+               --keep-models flag will override this options
+
+        Common Examples:
+        ----------------------------------
+        # make a new model with any juju name and destroy it when the tests are over
+        await ops_test.track_model("alias")
+
+        # make or reuse a model known to juju as "bob"
+        # don't destroy model if it existed, destroy it if it didn't already exist
+        await ops_test.track_model("alias", model_name="bob")
+        ----------------------------------
         """
         if alias in self._models:
             raise ModelInUseError(f"Cannot add new model with alias '{alias}'")
 
-        if create or not model_name:
+        if model_name and use_existing is None:
+            use_existing = await self._model_exists(model_name)
+
+        keep = bool(use_existing) if keep is None else keep
+        if use_existing:
+            if not model_name:
+                raise NotImplementedError(
+                    "Cannot use_existing model if model_name is unspecified"
+                )
+            model_state = await self._connect_to_model(
+                self.controller_name, model_name, keep
+            )
+        else:
             cloud_name = cloud_name or self.cloud_name
             model_name = model_name or self._generate_model_name()
             model_state = await self._add_model(
-                self.controller_name, cloud_name, model_name, **kwargs
+                self.controller_name, cloud_name, model_name, keep, **kwargs
             )
-        else:
-            model_state = await self._connect_to_model(self.controller_name, model_name)
         self._models[alias] = model_state
         return model_state.model
 
@@ -736,10 +775,8 @@ class OpsTest:
     async def _model_gone(self, model_name: Optional[str]):
         if not model_name or not self._controller:
             return
-        models = await self._controller.model_uuids()
-        while model_name in models:
+        while await self._model_exists(model_name):
             await asyncio.sleep(5.0)
-            models = await self._controller.model_uuids()
 
     async def forget_model(
         self, alias: str, timeout: Optional[Union[float, int]] = None
@@ -773,7 +810,17 @@ class OpsTest:
                 await self.create_crash_dump()
 
             if not self.keep_model:
-                # Forcibly destroy machines in case any units are in error.
+                # Forcibly destroy applications/machines in case any units are in error.
+                for application in model.applications.values():
+                    try:
+                        log.info(f"Destroying application {application.name}")
+                        await application.destroy()
+                    except DeadEntityException as e:
+                        log.warning(e)
+                        log.warning("Application already dead, skipping")
+                    except JujuError as e:
+                        log.exception(e)
+
                 for machine in model.machines.values():
                     try:
                         log.info(f"Destroying machine {machine.id}")
@@ -781,9 +828,12 @@ class OpsTest:
                     except DeadEntityException as e:
                         log.warning(e)
                         log.warning("Machine already dead, skipping")
+                    except JujuError as e:
+                        log.exception(e)
                 await model.disconnect()
+
                 log.info(f"Destroying model {model_name}")
-                await self._controller.destroy_model(model_name)
+                await self._controller.destroy_model(model_name, force=True)
                 log.info(f"Waiting on model teardown {model_name}...")
                 await asyncio.wait_for(self._model_gone(model_name), timeout=timeout)
             else:

@@ -88,6 +88,12 @@ class TestPlugin:
             "operator-framework",
         }
 
+        # track the main model with a second alias, don't do this other than testing
+        model_name = prior_model.info.name
+        duplicate = await ops_test.track_model("duplicate", model_name=model_name)
+        assert duplicate.info.uuid == prior_model.info.uuid
+        await ops_test.forget_model("duplicate")
+
     async def test_3_context_failure_reverts_model(self, ops_test):
         model_alias = "secondary"
         await ops_test.track_model(model_alias)

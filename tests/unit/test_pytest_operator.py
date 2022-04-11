@@ -353,6 +353,7 @@ def mock_juju():
         juju.controller.get_cloud = AsyncMock(return_value="this-cloud")
         juju.controller.add_model = AsyncMock(return_value=juju.model)
         juju.controller.model_uuids = AsyncMock(return_value={})
+        juju.controller.list_models = AsyncMock(return_value=[])
         juju.model.get_controller = AsyncMock(return_value=juju.controller)
         yield juju
 

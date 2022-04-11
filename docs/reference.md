@@ -266,18 +266,76 @@ applied if the marked test method fails or errors.
 Log a summary of the status of the model. This is automatically called before the model
 is cleaned up.
 
-#### `async def track_model(self, alias: str, model_name: Optional[str] = None, cloud_name: Optional[str] = None, create: bool = True, **kwargs,) -> Model`
+#### `async def track_model(self, alias: str, model_name: Optional[str] = None, cloud_name: Optional[str] = None, use_existing: Optional[bool] = None, keep: Optional[bool] = None, **kwargs,) -> Model`
 
 Indicate to `ops_test` to track a new model which is automatically created in juju or an existing juju model referenced by model_name. 
-This allows support for `ops_test` to track multiple models on various clouds by a unique alias name.
+This allows `ops_test` to track multiple models on various clouds by a unique alias name.
+
+##### Key parameters:
+* `alias`: Required `str` which defines the alias of the model used only by `ops_test`
+* `model_name`: Name of the model referenced by juju -- automatically generated if `None`
+* `cloud_name`: Name of the juju cloud where the model resides -- reuse current cloud if `None`
+* `use_existing`:
+  * `None` (default): `ops_test` will re-use an existing model-name if provided, otherwise False
+  * `False`: `ops_test` creates a new model
+  * `True`: `ops_test` won't create a new model, but will connect to an existing model by `model_name`
+* `keep`: 
+  * `None` (default): inherit boolean value of `use_existing`
+  * `False`: `ops_test` will destroy at the end of testing
+  * `True`: `ops_test` won't destroy at the end of testing
+
+##### Examples:
+
+```python
+# make a new model with any juju name and destroy it when the tests are over
+await ops_test.track_model("alias")
+
+# make a new model with any juju name but don't destroy it when the tests are over
+await ops_test.track_model("alias", keep=True)  
+
+# Invalid, can't reuse an existing model when the model_name isn't provided
+await ops_test.track_model("alias", use_existing=True)
+
+# connect to an existing model known to juju as "bob" and keep it when the tests are over
+await ops_test.track_model("alias", model_name="bob", use_existing=True)
+
+# connect to an existing model known to juju as "bob" but destroy it when the tests are over
+await ops_test.track_model("alias", model_name="bob", use_existing=True, keep=False)
+
+# make a new model known to juju as "bob" and destroy it when the tests are over
+await ops_test.track_model("alias", model_name="bob", use_existing=False)
+
+# make a new model known to juju as "bob" but don't destroy it when the tests are over
+await ops_test.track_model("alias", model_name="bob", use_existing=False, keep=False)
+
+"""
+the following examples where `model_name` is provided, will set `use_existing` implicitly
+depending on its existence in the controller.
+"""
+# make or reuse a model known to juju as "bob"
+# don't destroy model if it existed, destroy it if it didn't already exist
+await ops_test.track_model("alias", model_name="bob")
+
+# make or reuse a model known to juju as "bob" but don't destroy it when the tests are over
+await ops_test.track_model("alias", model_name="bob", keep=True)
+```
 
 #### `async def forget_model(self, alias: str, timeout: Optional[Union[float, int]] = None)`
 
-Indicate to `ops_test` to forget an existing model.
-* If this model was intended to be kept, the model will be forgotten by the test structure immediately
-* If not, the model will attempt to be destroyed and removed from the controller.  
+Indicate to `ops_test` to forget an existing model and `destroy` that model except under the following circumstances.
 
-A Timeout Exception will be raised if a timeout is provided and the model isn't destroyed within that period
+* If `--keep-models` was passed as a tox argument, no models will be destroyed.
+* If `--model=<specific model>` was passed as a tox argument, this specific model will not be destroyed.
+
+A Timeout Exception will be raised if a `timeout` value is specified and the model isn't destroyed 
+within that number of seconds.
+
+it's possible to determine if the model is a candidate for destroying using 
+```python
+    assert ops_test._init_keep_model is False # this flag is set when the keep-models argument is passed to pytest
+    assert ops_test.models["main"].keep is False  # by default, we forget and destroy models
+    assert ops_test.keep_model is False # the current aliased model will be kept/destroyed based on this property
+```
 
 
 #### `def model_context(self, alias: str) -> Generator[Model, None, None]:`
