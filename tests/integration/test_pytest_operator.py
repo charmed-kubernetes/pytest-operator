@@ -73,6 +73,7 @@ class TestPlugin:
         new_model = await ops_test.track_model(model_alias)
         with ops_test.model_context(model_alias) as model:
             assert model is new_model, "model_context should yield the new model"
+            assert model.info.name == ops_test.model_name
             assert (
                 not model.applications
             ), "There should be no applications in the model"

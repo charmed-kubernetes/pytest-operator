@@ -388,14 +388,16 @@ async def test_fixture_set_up_existing_model(
 
 
 @patch("pytest_operator.plugin.OpsTest.forget_model")
+@patch("pytest_operator.plugin.OpsTest.run")
 async def test_fixture_cleanup_multi_model(
-    mock_forget_model, mock_juju, setup_request, tmp_path_factory
+    mock_run, mock_forget_model, mock_juju, setup_request, tmp_path_factory
 ):
     ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
     await ops_test._setup_model()
     await ops_test.track_model("secondary")
     assert len(ops_test.models) == 2
     await ops_test._cleanup_models()
+    mock_run.assert_has_calls([call("juju", "models")] * 2)
     mock_forget_model.assert_has_calls(
         [
             call("secondary"),

@@ -422,7 +422,7 @@ class OpsTest:
         self._controller: Optional[Controller] = None
 
         # maintains a set of all models connected by this fixture
-        # use an OrderedDict so that the first model made
+        # use an OrderedDict so that the first model made is destroyed last.
         self._current_alias = None
         self._models: MutableMapping[str, ModelState] = OrderedDict()
 
@@ -441,10 +441,8 @@ class OpsTest:
             # error condition occurred through the context
             self._switch(prior, raise_not_found=False)
 
-    def _switch(self, alias: Optional[str], raise_not_found=True) -> Model:
-        if alias is None:
-            self._current_alias = None
-        elif alias in self._models:
+    def _switch(self, alias: str, raise_not_found=True) -> Model:
+        if alias in self._models:
             self._current_alias = alias
         elif not raise_not_found:
             self._current_alias = None
@@ -548,6 +546,9 @@ class OpsTest:
             env["JUJU_DATA"] = self.jujudata.path
         if self.model_full_name:
             env["JUJU_MODEL"] = self.model_full_name
+
+        if not isinstance(stdin, bytes) and stdin is not None:
+            raise TypeError("'stdin' parameter must be a Optional[bytes] typed")
 
         proc = await asyncio.create_subprocess_exec(
             *(str(c) for c in cmd),
@@ -756,11 +757,11 @@ class OpsTest:
             return
 
         if alias not in self.models:
-            log.warning(f"No access to model alias {alias}, skipping...")
-            return
+            raise ModelNotFoundError(f"{alias} not found")
 
         with self.model_context(alias) as model:
             await self.log_model()
+            model_name = model.info.name
 
             # NOTE (rgildein): Create juju-crashdump only if any tests failed,
             # `juju-crashdump` flag is enabled and OpsTest.keep_model == False
@@ -781,12 +782,10 @@ class OpsTest:
                         log.warning(e)
                         log.warning("Machine already dead, skipping")
                 await model.disconnect()
-                log.info(f"Destroying model {self.model_name}")
-                await self._controller.destroy_model(self.model_name)
-                log.info(f"Waiting on model teardown {self.model_name}...")
-                await asyncio.wait_for(
-                    self._model_gone(self.model_name), timeout=timeout
-                )
+                log.info(f"Destroying model {model_name}")
+                await self._controller.destroy_model(model_name)
+                log.info(f"Waiting on model teardown {model_name}...")
+                await asyncio.wait_for(self._model_gone(model_name), timeout=timeout)
             else:
                 await model.disconnect()
 
@@ -824,7 +823,7 @@ class OpsTest:
         self.aborted = True
         pytest.fail(*args, **kwargs)
 
-    async def build_charm(self, charm_path):
+    async def build_charm(self, charm_path) -> Path:
         """Builds a single charm.
 
         This can handle charms using the older charms.reactive framework as
@@ -900,7 +899,7 @@ class OpsTest:
         charm_file_src.rename(charm_file_dst)
         return charm_file_dst
 
-    async def build_charms(self, *charm_paths):
+    async def build_charms(self, *charm_paths) -> Mapping[str, Path]:
         """Builds one or more charms in parallel.
 
         This can handle charms using the older charms.reactive framework as
