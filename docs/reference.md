@@ -19,13 +19,19 @@ All tests within a module will share the same model.
 
 Keep any automatically created models.
 
-
 ### `--model-config`
 
 Path to a yaml file which will be applied to the model on creation.
 
  * ignored if `--model` supplied 
  * if the specified file doesn't exist, an error will be raised.
+
+### `--model-alias`
+
+Alias of the first model tracked by `ops_test`.  This alias in no way relates to the
+name of the model as known by juju.  For that see `--model`.
+* if not provided, the first created model alias is "main"
+* if provided the tests may reference the model by a different alias.
 
 ### `--no-deploy`
 
@@ -112,21 +118,21 @@ results or reason for failure, so these warnings are automatically ignored.
 
 #### `model`
 
-The python-libjuju `Model` instance for the test.
+The current aliased python-libjuju `Model` instance for the test.
 
 #### `model_full_name`
 
-The fully qualified model name, including the controller.
+The fully qualified model name, including the controller of the current aliased model.
 
 #### `tmp_path`
 
 A `pathlib.Path()` instance to an automatically created temporary directory for the
-test.
+test of the current aliased model.
 
 #### `cloud_name`
 
 The name of the cloud provided via the `--cloud` command-line parameter. If `None`, the
-default cloud for the controller.
+default cloud for the controller of the current aliased model.
 
 #### `controller_name`
 
@@ -134,8 +140,9 @@ The name of the controller being used.
 
 #### `model_name`
 
-The name of the model being used, whether it was automatically generated or provided by
-the `--model` command-line parameter.
+The name of the juju model referenced by the current aliased model. 
+If the alias is set as the first model, that name will reflect its automatically generated
+name or the name provided by the `--model` command-line parameter.
 
 ### Methods
 
@@ -225,7 +232,8 @@ A helper which renders multiple bundles at once.
 Returns a list of `pathlib.Path` instances for each bundle, in the same order as the
 args.
 
-#### `async def run(self, *cmd, cwd=None, check=False, fail_msg=None)`
+
+#### `async def run(self, *cmd: str, cwd: Optional[os.PathLike] = None, check: bool = False, fail_msg: Optional[str] = None, stdin: Optional[bytes] = None)`
 
 Asynchronously run a subprocess command.
 
@@ -233,7 +241,7 @@ If `check` is False, returns a tuple of the return code, stdout, and stderr (dec
 utf8). Otherwise, calls `pytest.fail` with `fail_msg` (if given) and relevant command
 info.
 
-#### `async def juju(self, *args)`
+#### `async def juju(self, *args, **kwargs)`
 
 Runs a Juju CLI command.
 
@@ -257,5 +265,113 @@ applied if the marked test method fails or errors.
 
 Log a summary of the status of the model. This is automatically called before the model
 is cleaned up.
+
+#### `async def track_model(self, alias: str, model_name: Optional[str] = None, cloud_name: Optional[str] = None, use_existing: Optional[bool] = None, keep: Optional[bool] = None, **kwargs,) -> Model`
+
+Indicate to `ops_test` to track a new model which is automatically created in juju or an existing juju model referenced by model_name. 
+This allows `ops_test` to track multiple models on various clouds by a unique alias name.
+
+##### Key parameters:
+* `alias`: Required `str` which defines the alias of the model used only by `ops_test`
+* `model_name`: Name of the model referenced by juju -- automatically generated if `None`
+* `cloud_name`: Name of the juju cloud where the model resides -- reuse current cloud if `None`
+* `use_existing`:
+  * `None` (default): `ops_test` will re-use an existing model-name if provided, otherwise False
+  * `False`: `ops_test` creates a new model
+  * `True`: `ops_test` won't create a new model, but will connect to an existing model by `model_name`
+* `keep`: 
+  * `None` (default): inherit boolean value of `use_existing`
+  * `False`: `ops_test` will destroy at the end of testing
+  * `True`: `ops_test` won't destroy at the end of testing
+
+##### Examples:
+
+```python
+# make a new model with any juju name and destroy it when the tests are over
+await ops_test.track_model("alias")
+
+# make a new model with any juju name but don't destroy it when the tests are over
+await ops_test.track_model("alias", keep=True)  
+
+# Invalid, can't reuse an existing model when the model_name isn't provided
+await ops_test.track_model("alias", use_existing=True)
+
+# connect to an existing model known to juju as "bob" and keep it when the tests are over
+await ops_test.track_model("alias", model_name="bob", use_existing=True)
+
+# connect to an existing model known to juju as "bob" but destroy it when the tests are over
+await ops_test.track_model("alias", model_name="bob", use_existing=True, keep=False)
+
+# make a new model known to juju as "bob" and destroy it when the tests are over
+await ops_test.track_model("alias", model_name="bob", use_existing=False)
+
+# make a new model known to juju as "bob" but don't destroy it when the tests are over
+await ops_test.track_model("alias", model_name="bob", use_existing=False, keep=False)
+
+"""
+the following examples where `model_name` is provided, will set `use_existing` implicitly
+depending on its existence in the controller.
+"""
+# make or reuse a model known to juju as "bob"
+# don't destroy model if it existed, destroy it if it didn't already exist
+await ops_test.track_model("alias", model_name="bob")
+
+# make or reuse a model known to juju as "bob" but don't destroy it when the tests are over
+await ops_test.track_model("alias", model_name="bob", keep=True)
+```
+
+#### `async def forget_model(self, alias: str, timeout: Optional[Union[float, int]] = None)`
+
+Indicate to `ops_test` to forget an existing model and `destroy` that model except under the following circumstances.
+
+* If `--keep-models` was passed as a tox argument, no models will be destroyed.
+* If `--model=<specific model>` was passed as a tox argument, this specific model will not be destroyed.
+
+A Timeout Exception will be raised if a `timeout` value is specified and the model isn't destroyed 
+within that number of seconds.
+
+it's possible to determine if the model is a candidate for destroying using 
+```python
+    assert ops_test._init_keep_model is False # this flag is set when the keep-models argument is passed to pytest
+    assert ops_test.models["main"].keep is False  # by default, we forget and destroy models
+    assert ops_test.keep_model is False # the current aliased model will be kept/destroyed based on this property
+```
+
+
+#### `def model_context(self, alias: str) -> Generator[Model, None, None]:`
+
+The only way to switch between tracked models is by using this method to change
+the context of the model to which the tests refer.   
+
+For example, assume there are two models being tracked by ops_test: "main" and "secondary"
+The following test would `PASS` due to the nature of `model_context`'s function.
+
+```python
+def test_second_model(ops_test):
+    assert ops_test.current_alias == "main"
+    primary_model = ops_test.model
+    with ops_test.model_context("secondary") as secondary_model:
+        # now this is testing the secondary model
+        assert ops_test.current_alias == "secondary"
+        assert ops_test.model == secondary_model
+
+    # now this is testing the main model
+    assert secondary_model != primary_model
+    assert ops_test.current_alias == "main"
+    assert ops_test.model == primary_model
+```
+
+The following ops_test properties will change their values within a `model_context`
+* `current_alias`
+* `tmp_path`
+* `model_config`
+* `model`
+* `model_full_name`
+* `model_name`
+* `cloud_name`
+* `keep_model`
+
+Once the model context closes, `ops_test` returns the current_alias back to the prior model's context
+assuming that it references a model alias which hasn't been forgotten.
 
 [juju-bundle]: https://snapcraft.io/juju-bundle

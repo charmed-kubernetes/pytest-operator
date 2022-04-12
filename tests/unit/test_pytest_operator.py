@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from unittest.mock import Mock, AsyncMock, ANY, patch, call, MagicMock
+from unittest.mock import Mock, AsyncMock, ANY, patch, call, MagicMock, PropertyMock
 from urllib.error import HTTPError
 from pathlib import Path
 from types import SimpleNamespace
@@ -181,7 +181,6 @@ async def test_plugin_build_resources(tmp_path_factory):
     ops_test = plugin.OpsTest(Mock(**{"module.__name__": "test"}), tmp_path_factory)
     ops_test.jujudata = Mock()
     ops_test.jujudata.path = ""
-    ops_test.model_full_name = ops_test.default_model_name
 
     with pytest.raises(FileNotFoundError):
         build_script = Path("tests") / "data" / "build_resources_does_not_exist.sh"
@@ -212,7 +211,6 @@ async def test_plugin_fetch_resources(tmp_path_factory, resource_charm):
     ops_test = plugin.OpsTest(Mock(**{"module.__name__": "test"}), tmp_path_factory)
     ops_test.jujudata = Mock()
     ops_test.jujudata.path = ""
-    ops_test.model_full_name = ops_test.default_model_name
     arch_resources = ops_test.arch_specific_resources(resource_charm)
 
     def dl_rsc(resource, dest_path):
@@ -243,14 +241,20 @@ async def test_crash_dump_mode(monkeypatch, tmp_path_factory):
         mock_request := Mock(**{"module.__name__": "test"}), tmp_path_factory
     )
     ops_test.crash_dump = True
-    ops_test.keep_model = False
-    ops_test.model = MagicMock()
-    ops_test.model.machines.values.return_value = []
-    ops_test.model.disconnect = AsyncMock()
-    ops_test.model_full_name = "test-model"
+    model = MagicMock()
+    model.machines.values.return_value = []
+    model.disconnect = AsyncMock()
+    ops_test._init_keep_model = None
+    ops_test._current_alias = "main"
+    ops_test._models = {
+        ops_test.current_alias: plugin.ModelState(
+            model, False, "test", "local", "model"
+        )
+    }
     ops_test.crash_dump_output = None
     ops_test.log_model = AsyncMock()
     ops_test._controller = AsyncMock()
+    ops_test._model_gone = AsyncMock(return_value=None)
 
     # 0 tests failed
     mock_request.session.testsfailed = 0
@@ -261,6 +265,12 @@ async def test_crash_dump_mode(monkeypatch, tmp_path_factory):
     mock_run.reset_mock()
 
     # 1 tests failed
+    ops_test._current_alias = "main"
+    ops_test._models = {
+        ops_test.current_alias: plugin.ModelState(
+            model, False, "test", "local", "model"
+        )
+    }
     mock_request.session.testsfailed = 1
 
     await ops_test._cleanup_model()
@@ -269,7 +279,7 @@ async def test_crash_dump_mode(monkeypatch, tmp_path_factory):
         "juju-crashdump",
         "-s",
         "-m",
-        "test-model",
+        "test:model",
         "-a",
         "debug-layer",
         "-a",
@@ -312,11 +322,11 @@ def test_no_deploy_mode(pytester):
     """
     )
     # test without --no-deploy option
-    result = pytester.runpytest()
+    result = pytester.runpytest("--asyncio-mode=auto")
     result.assert_outcomes(passed=3)
 
     # test with --no-deploy, but without --model option
-    result = pytester.runpytest("--no-deploy")
+    result = pytester.runpytest("--no-deploy", "--asyncio-mode=auto")
     assert any(
         "error: must specify --model when using --no-deploy" in errline
         for errline in result.errlines
@@ -324,5 +334,181 @@ def test_no_deploy_mode(pytester):
     assert result.outlines == []
 
     # test with --no-deploy and --model
-    result = pytester.runpytest("--no-deploy", "--model", "test-model")
+    result = pytester.runpytest(
+        "--no-deploy", "--model", "test-model", "--asyncio-mode=auto"
+    )
     result.assert_outcomes(passed=2, skipped=1)
+
+
+@pytest.fixture
+def mock_juju():
+    juju = SimpleNamespace()
+    with patch("pytest_operator.plugin.Model", autospec=True) as MockModel, patch(
+        "pytest_operator.plugin.Controller", autospec=True
+    ) as MockController:
+        juju.controller = MockController.return_value
+        juju.model = MockModel.return_value
+
+        juju.controller.controller_name = "this-controller"
+        juju.controller.get_cloud = AsyncMock(return_value="this-cloud")
+        juju.controller.add_model = AsyncMock(return_value=juju.model)
+        juju.controller.model_uuids = AsyncMock(return_value={})
+        juju.controller.list_models = AsyncMock(return_value=[])
+        juju.model.get_controller = AsyncMock(return_value=juju.controller)
+        yield juju
+
+
+@pytest.fixture
+def setup_request(request, mock_juju):
+    mock_request = MagicMock()
+    mock_request.module.__name__ = request.node.name
+    mock_request.config.option.controller = mock_juju.controller.controller_name
+    mock_request.config.option.model = None
+    mock_request.config.option.cloud = None
+    mock_request.config.option.model_alias = "main"
+    mock_request.config.option.model_config = None
+    mock_request.config.option.keep_models = False
+    yield mock_request
+
+
+async def test_fixture_set_up_existing_model(
+    mock_juju, setup_request, tmp_path_factory
+):
+    setup_request.config.option.model = "this-model"
+    ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
+    assert ops_test.model is None
+
+    await ops_test._setup_model()
+    mock_juju.model.connect.assert_called_with("this-controller:this-model")
+    assert ops_test.model == mock_juju.model
+    assert ops_test.model_full_name == "this-controller:this-model"
+    assert ops_test.cloud_name is None
+    assert ops_test.model_name == "this-model"
+    assert ops_test.keep_model is True, "Model should be kept if it already exists"
+    assert len(ops_test.models) == 1
+
+
+@patch("pytest_operator.plugin.OpsTest.forget_model")
+@patch("pytest_operator.plugin.OpsTest.run")
+async def test_fixture_cleanup_multi_model(
+    mock_run, mock_forget_model, mock_juju, setup_request, tmp_path_factory
+):
+    ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
+    await ops_test._setup_model()
+    await ops_test.track_model("secondary")
+    assert len(ops_test.models) == 2
+    await ops_test._cleanup_models()
+    mock_run.assert_has_calls([call("juju", "models")] * 2)
+    mock_forget_model.assert_has_calls(
+        [
+            call("secondary"),
+            call("main"),
+        ],
+        any_order=False,
+    )
+
+
+@patch("pytest_operator.plugin.OpsTest.default_model_name", new_callable=PropertyMock)
+@patch("pytest_operator.plugin.OpsTest.juju", autospec=True)
+async def test_fixture_set_up_automatic_model(
+    juju_cmd, mock_default_model_name, mock_juju, setup_request, tmp_path_factory
+):
+    model_name = "this-auto-generated-model-name"
+    mock_default_model_name.return_value = model_name
+    ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
+    assert ops_test.model is None
+
+    await ops_test._setup_model()
+    mock_juju.controller.add_model.assert_called_with(
+        model_name, "this-cloud", config=None
+    )
+    juju_cmd.assert_called_with(ops_test, "models")
+    assert ops_test.model == mock_juju.model
+    assert ops_test.model_full_name == f"this-controller:{model_name}"
+    assert ops_test.cloud_name == "this-cloud"
+    assert ops_test.model_name == model_name
+    # Don't keep a model if it's automatically generated
+    assert ops_test.keep_model is False
+    assert len(ops_test.models) == 1
+
+
+@pytest.mark.parametrize("model_name", [None, "alt-model"])
+@pytest.mark.parametrize("cloud_name", [None, "alt-cloud"])
+@patch("pytest_operator.plugin.OpsTest.juju", autospec=True)
+async def test_fixture_create_remove_model(
+    juju_cmd, model_name, cloud_name, mock_juju, setup_request, tmp_path_factory
+):
+    juju_cmd.return_value = (0, "", "")
+    setup_request.session.testsfailed = 0
+    ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
+    await ops_test._setup_model()
+    assert len(ops_test.models) == 1
+    first_model = SimpleNamespace(
+        alias=ops_test.current_alias,
+        model=ops_test.model,
+        controller_name=ops_test.controller_name,
+        model_name=ops_test.model_name,
+        cloud_name=ops_test.cloud_name,
+        tmp_path=ops_test.tmp_path,
+    )
+
+    test_alias = "model-alias"
+    await ops_test.track_model(test_alias, model_name=model_name, cloud_name=cloud_name)
+    juju_cmd.assert_called_with(ops_test, "models")
+
+    # Adding a model doesn't switch the current model.
+    assert ops_test.current_alias == "main"
+    assert len(ops_test.models) == 2
+
+    # Now let's switch into it
+    with ops_test.model_context(test_alias):
+        test_model = SimpleNamespace(
+            alias=ops_test.current_alias,
+            model=ops_test.model,
+            controller_name=ops_test.controller_name,
+            model_name=ops_test.model_name,
+            cloud_name=ops_test.cloud_name,
+            tmp_path=ops_test.tmp_path,
+            keep_model=ops_test.keep_model,
+        )
+        # Within this context the current alias is updated
+        assert ops_test.current_alias == test_alias
+
+    # leaving this context, current alias switches back to 'main'
+    assert ops_test.current_alias == "main"
+    # And all properties reflect the main model
+    assert ops_test.model_name == first_model.model_name
+    assert ops_test.model == first_model.model
+    assert ops_test.cloud_name == first_model.cloud_name
+    assert ops_test.controller_name == first_model.controller_name
+    assert ops_test.tmp_path == first_model.tmp_path
+
+    if model_name is None:
+        generated = setup_request.module.__name__.replace("_", "-")
+        assert test_model.model_name.startswith(generated)
+    else:
+        assert test_model.model_name == model_name
+    assert first_model.alias != test_alias, "Model Alias must be different"
+
+    if cloud_name is None:
+        # cloud-names should match if cloud-name is None
+        assert first_model.cloud_name == test_model.cloud_name
+
+    # controller-names should match
+    assert first_model.controller_name == test_model.controller_name
+
+    # New tmp_path should be generated
+    assert first_model.tmp_path != test_model.tmp_path
+
+    # Created models shouldn't be kept
+    assert not test_model.keep_model
+
+    await ops_test.forget_model(test_alias)
+
+    # Should be back to managing only one model
+    assert len(ops_test.models) == 1
+
+    # Ensure switching to that context fails
+    with pytest.raises(plugin.ModelNotFoundError):
+        with ops_test.model_context(test_alias):
+            pass

@@ -1,4 +1,6 @@
 import asyncio
+import contextlib
+import dataclasses
 import grp
 import inspect
 import json
@@ -10,13 +12,23 @@ import shlex
 import subprocess
 import sys
 import textwrap
+from collections import OrderedDict
 from functools import cached_property
 from fnmatch import fnmatch
 from pathlib import Path
 from random import choices
 from string import ascii_lowercase, digits, hexdigits
 from timeit import default_timer as timer
-from typing import Iterable, Optional, List
+from typing import (
+    Generator,
+    Iterable,
+    List,
+    MutableMapping,
+    Mapping,
+    Optional,
+    Tuple,
+    Union,
+)
 from urllib.request import urlretrieve, urlopen
 from urllib.parse import urlencode
 from urllib.error import HTTPError
@@ -29,9 +41,9 @@ import yaml
 from _pytest.config import Config
 from _pytest.config.argparsing import Parser
 from juju.client.jujudata import FileJujuData
-from juju.controller import Controller
 from juju.exceptions import DeadEntityException
-from juju.model import Model
+from juju.errors import JujuError
+from juju.model import Model, Controller
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +60,12 @@ def pytest_addoption(parser: Parser):
         action="store",
         help="Juju controller to use; if not provided, "
         "will use the current controller",
+    )
+    parser.addoption(
+        "--model-alias",
+        action="store",
+        help="Alias name used for the model created by ops_test",
+        default="main",
     )
     parser.addoption(
         "--model",
@@ -214,11 +232,11 @@ async def ops_test(request, tmp_path_factory):
     OpsTest._instance = ops_test
     yield ops_test
     OpsTest._instance = None
-    await ops_test._cleanup_model()
+    await ops_test._cleanup_models()
 
 
 def handle_file_delete_error(function, path, execinfo):
-    log.warn(f"Failed to delete '{path}' due to {execinfo[1]}")
+    log.warning(f"Failed to delete '{path}' due to {execinfo[1]}")
 
 
 class FileResource:
@@ -347,15 +365,38 @@ class CharmStore:
         return local_file
 
 
+class ModelNotFoundError(Exception):
+    """Raise when referencing to a model that doesn't exist."""
+
+
+class ModelInUseError(Exception):
+    """Raise when trying to add a model alias which already exists."""
+
+
+@dataclasses.dataclass
+class ModelState:
+    model: Model
+    keep: bool
+    controller_name: str
+    cloud_name: Optional[str]
+    model_name: str
+    config: Optional[dict] = None
+    tmp_path: Optional[Path] = None
+
+    @property
+    def full_name(self) -> str:
+        return f"{self.controller_name}:{self.model_name}"
+
+
 class OpsTest:
     """Utility class for testing Operator Charms."""
 
-    _instance = None  # store instance so we can tell if it's been used yet
+    _instance = None  # store instance, so we can tell if it's been used yet
 
     def __init__(self, request, tmp_path_factory):
         self.request = request
-        self.tmp_path: Path = tmp_path_factory.mktemp(self.default_model_name)
-        log.info(f"Using tmp_path: {self.tmp_path}")
+        self._tmp_path_factory = tmp_path_factory
+        self._global_tmp_path = None
 
         # Flag indicating whether all subsequent tests should be aborted.
         self.aborted = False
@@ -363,37 +404,143 @@ class OpsTest:
         # Flag for using destructive mode or not for charm builds.
         self.destructive_mode = request.config.option.destructive_mode
 
+        # Config options to determine first model specs used by tests
+        self._orig_model_alias = request.config.option.model_alias
+        self._init_cloud_name = request.config.option.cloud
+        self._init_model_name = request.config.option.model
+        self._init_keep_model = request.config.option.keep_models
+
         # These may be modified by _setup_model
-        self.cloud_name = request.config.option.cloud
         self.controller_name = request.config.option.controller
-        self.model_name = request.config.option.model
-        self.keep_model = request.config.option.keep_models
-        self.model_config = request.config.option.model_config
+        self._init_model_config = request.config.option.model_config
 
         # Flag for enabling the juju-crashdump
         self.crash_dump = not request.config.option.no_crash_dump
         self.crash_dump_output = request.config.option.crash_dump_output
 
         # These will be set by _setup_model
-        self.model_full_name = None
-        self.model = None
         self.jujudata = None
-        self._controller = None
+        self._controller: Optional[Controller] = None
+
+        # maintains a set of all models connected by this fixture
+        # use an OrderedDict so that the first model made is destroyed last.
+        self._current_alias = None
+        self._models: MutableMapping[str, ModelState] = OrderedDict()
+
+    @contextlib.contextmanager
+    def model_context(self, alias: str) -> Generator[Model, None, None]:
+        """
+        Analog to `juju switch` where the focus of the current model is moved.
+        """
+        prior = self.current_alias
+        model = self._switch(alias)
+        try:
+            yield model
+        finally:
+            # if the there's a failure after yielding, don't fail to
+            # switch back to the prior alias but still raise whatever
+            # error condition occurred through the context
+            self._switch(prior, raise_not_found=False)
+
+    def _switch(self, alias: str, raise_not_found=True) -> Model:
+        if alias in self._models:
+            self._current_alias = alias
+        elif not raise_not_found:
+            self._current_alias = None
+        else:
+            raise ModelNotFoundError(f"{alias} not found")
+
+        return self.model
 
     @property
-    def default_model_name(self):
-        if not hasattr(self, "_default_model_name"):
-            module_name = self.request.module.__name__.rpartition(".")[-1]
-            suffix = "".join(choices(ascii_lowercase + digits, k=4))
-            self._default_model_name = f"{module_name.replace('_', '-')}-{suffix}"
-        return self._default_model_name
+    def current_alias(self) -> Optional[str]:
+        return self._current_alias
 
-    async def run(self, *cmd, cwd=None, check=False, fail_msg=None):
+    @property
+    def models(self) -> Mapping[str, ModelState]:
+        """Returns the dict of managed models by this fixture."""
+        return {k: dataclasses.replace(v) for k, v in self._models.items()}
+
+    @property
+    def tmp_path(self) -> Path:
+        tmp_path = self._global_tmp_path
+        current_state = self.current_alias and self._models.get(self.current_alias)
+        if current_state and current_state.tmp_path is None:
+            tmp_path = self._tmp_path_factory.mktemp(current_state.model_name)
+            current_state.tmp_path = tmp_path
+        elif current_state and current_state.tmp_path:
+            tmp_path = current_state.tmp_path
+        elif not tmp_path:
+            tmp_path = self._global_tmp_path = self._tmp_path_factory.mktemp(
+                self.default_model_name
+            )
+        log.info(f"Using tmp_path: {tmp_path}")
+        return tmp_path
+
+    @property
+    def model_config(self) -> Optional[dict]:
+        """Represents the config used when adding the model."""
+        current_state = self.current_alias and self._models.get(self.current_alias)
+        return current_state.config if current_state else None
+
+    @property
+    def model(self) -> Optional[Model]:
+        """Represents the current model."""
+        current_state = self.current_alias and self._models.get(self.current_alias)
+        return current_state.model if current_state else None
+
+    @property
+    def model_full_name(self) -> Optional[str]:
+        """Represents the current model's full name."""
+        current_state = self.current_alias and self._models.get(self.current_alias)
+        return current_state.full_name if current_state else None
+
+    @property
+    def model_name(self) -> Optional[str]:
+        """Represents the current model name."""
+        current_state = self.current_alias and self._models.get(self.current_alias)
+        return current_state.model_name if current_state else None
+
+    @property
+    def cloud_name(self) -> Optional[str]:
+        """Represents the current model's cloud name."""
+        current_state = self.current_alias and self._models.get(self.current_alias)
+        return current_state.cloud_name if current_state else None
+
+    @property
+    def keep_model(self) -> bool:
+        """Represents whether the current model should be kept after tests."""
+        if self._init_keep_model:
+            return True
+        current_state = self.current_alias and self._models.get(self.current_alias)
+        return current_state.keep if current_state else False
+
+    def _generate_model_name(self) -> str:
+        module_name = self.request.module.__name__.rpartition(".")[-1]
+        suffix = "".join(choices(ascii_lowercase + digits, k=4))
+        return f"{module_name.replace('_', '-')}-{suffix}"
+
+    @cached_property
+    def default_model_name(self) -> str:
+        return self._generate_model_name()
+
+    async def run(
+        self,
+        *cmd: str,
+        cwd: Optional[os.PathLike] = None,
+        check: bool = False,
+        fail_msg: Optional[str] = None,
+        stdin: Optional[bytes] = None,
+    ) -> Tuple[Optional[int], str, str]:
         """Asynchronously run a subprocess command.
 
-        If `check` is False, returns a tuple of the return code, stdout, and
-        stderr (decoded as utf8). Otherwise, calls `pytest.fail` with
-        `fail_msg` and relevant command info.
+        @param                   str cmd: command to execute within a juju context
+        @param Optional[os.Pathlink] cwd: current working directory
+        @param                bool check: if False, returns a tuple (rc, stdout, stderr)
+                                          if True,  calls `pytest.fail` with `fail_msg`
+                                          and relevant command information
+        @param Optional[str]    fail_msg: Message to present if check=True and rc != 0
+        @param Optional[bytes]     stdin: Bytes read by stdin of the called process
         """
         env = {**os.environ}
         if self.jujudata:
@@ -401,15 +548,20 @@ class OpsTest:
         if self.model_full_name:
             env["JUJU_MODEL"] = self.model_full_name
 
+        if not isinstance(stdin, bytes) and stdin is not None:
+            raise TypeError("'stdin' parameter must be a Optional[bytes] typed")
+
         proc = await asyncio.create_subprocess_exec(
             *(str(c) for c in cmd),
-            cwd=str(cwd or "."),
+            stdin=asyncio.subprocess.PIPE if isinstance(stdin, bytes) else None,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            cwd=str(cwd or "."),
             env=env,
         )
-        stdout, stderr = await proc.communicate()
-        stdout, stderr = stdout.decode("utf8"), stderr.decode("utf8")
+
+        _stdout, _stderr = await proc.communicate(input=stdin)
+        stdout, stderr = _stdout.decode("utf8"), _stderr.decode("utf8")
         if check and proc.returncode != 0:
             if fail_msg is None:
                 fail_msg = f"Command {list(cmd)} failed"
@@ -420,53 +572,173 @@ class OpsTest:
 
     _run = run  # backward compatibility alias
 
-    async def juju(self, *args):
+    async def juju(self, *args, **kwargs):
         """Runs a Juju CLI command.
 
         Useful for cases where python-libjuju sees things differently than the Juju CLI.
         Will set `JUJU_MODEL`, so manually passing in `-m model-name` is unnecessary.
         """
 
-        return await self.run("juju", *args)
+        return await self.run("juju", *args, **kwargs)
+
+    async def _add_model(
+        self, controller_name, cloud_name, model_name, keep=False, **kwargs
+    ):
+        """
+        Creates a model used by the test framework which would normally be destroyed
+        after the tests are run in the module.
+        """
+        controller = self._controller
+        if not controller:
+            controller = Controller()
+            await controller.connect(controller_name)
+        if not cloud_name:
+            # if not provided, try the default cloud name
+            cloud_name = self._init_cloud_name
+        if not cloud_name:
+            # if not provided, use the controller's default cloud
+            cloud_name = await controller.get_cloud()
+        model_full_name = f"{controller_name}:{model_name}"
+        log.info(f"Adding model {model_full_name} on cloud {cloud_name}")
+
+        model = await controller.add_model(model_name, cloud_name, **kwargs)
+        # NB: This call to `juju models` is needed because libjuju's
+        # `add_model` doesn't update the models.yaml cache that the Juju
+        # CLI depends on with the model's UUID, which the CLI requires to
+        # connect. Calling `juju models` beforehand forces the CLI to
+        # update the cache from the controller.
+        await self.juju("models")
+        state = ModelState(model, keep, controller_name, cloud_name, model_name)
+        state.config = await model.get_config()
+        return state
+
+    async def _model_exists(self, model_name: str) -> bool:
+        """
+        returns True when the model_name exists in the model.
+        """
+        all_models = await self._controller.list_models()
+        return model_name in all_models
+
+    @staticmethod
+    async def _connect_to_model(controller_name, model_name, keep=True):
+        """
+        Makes a reference to an existing model used by the test framework
+        which will not be destroyed after the tests are run in the module.
+        """
+        model = Model()
+        state = ModelState(model, keep, controller_name, None, model_name)
+        log.info(
+            "Connecting to existing model %s on unspecified cloud", state.full_name
+        )
+        await model.connect(state.full_name)
+        state.config = await model.get_config()
+        return state
+
+    @staticmethod
+    def read_model_config(
+        config_path_or_obj: Union[dict, str, os.PathLike, None]
+    ) -> Optional[dict]:
+        if isinstance(config_path_or_obj, dict):
+            return config_path_or_obj
+        model_config = None
+        if config_path_or_obj:
+            model_config_file = Path(config_path_or_obj)
+            if not model_config_file.exists():
+                log.error("model-config file %s doesn't exist", model_config_file)
+                raise FileNotFoundError(model_config_file)
+            else:
+                log.info("Loading model config from %s", model_config_file)
+                model_config = yaml.safe_load(model_config_file.read_text())
+        return model_config
 
     async def _setup_model(self):
         # TODO: We won't need this if Model.debug_log is implemented in libjuju
         self.jujudata = FileJujuData()
+        alias = self._orig_model_alias
         if not self.controller_name:
             self.controller_name = self.jujudata.current_controller()
-        if not self.model_name:
-            self.model_name = self.default_model_name
-            self.model_full_name = f"{self.controller_name}:{self.model_name}"
-            self._controller = Controller()
-            await self._controller.connect(self.controller_name)
-            on_cloud = f" on cloud {self.cloud_name}" if self.cloud_name else ""
-            log.info(f"Adding model {self.model_full_name}{on_cloud}")
-
-            model_config = None
-            if self.model_config:
-                model_config_file = Path(self.model_config)
-                if not model_config_file.exists():
-                    log.error("model-config file %s doesn't exist", model_config_file)
-                    raise FileNotFoundError(model_config_file)
-                else:
-                    log.info("Loading model config from %s", model_config_file)
-                    model_config = yaml.safe_load(model_config_file.read_text())
-
-            self.model = await self._controller.add_model(
-                self.model_name, cloud_name=self.cloud_name, config=model_config
+        if not self._init_model_name:
+            # no --model flag specified, automatically generate a model
+            config = self.read_model_config(self._init_model_config)
+            model_state = await self._add_model(
+                self.controller_name,
+                self._init_cloud_name,
+                self.default_model_name,
+                config=config,
             )
-            # NB: This call to `juju models` is needed because libjuju's
-            # `add_model` doesn't update the models.yaml cache that the Juju
-            # CLI depends on with the model's UUID, which the CLI requires to
-            # connect. Calling `juju models` beforehand forces the CLI to
-            # update the cache from the controller.
-            await self.juju("models")
         else:
-            self.model_full_name = f"{self.controller_name}:{self.model_name}"
-            log.info(f"Connecting to model {self.model_full_name}")
-            self.model = Model()
-            await self.model.connect(self.model_full_name)
-            self.keep_model = True  # don't cleanup models we didn't create
+            # --model flag specified, reuse existing model and set keep flag
+            model_state = await self._connect_to_model(
+                self.controller_name, self._init_model_name
+            )
+
+        if not self._controller:
+            self._controller = await model_state.model.get_controller()
+
+        self._models[alias] = model_state
+        self._current_alias = alias
+
+    async def track_model(
+        self,
+        alias: str,
+        model_name: Optional[str] = None,
+        cloud_name: Optional[str] = None,
+        use_existing: Optional[bool] = None,
+        keep: Optional[bool] = None,
+        **kwargs,
+    ) -> Model:
+        """
+        Track a new or existing model in the existing controller.
+
+        @param str           alias     : alias to the model used only by ops_test
+                                         to differentiate between models.
+        @param Optional[str] model_name: name of the new model to track,
+                                         None will craft a unique name
+        @param Optional[str] cloud_name: cloud name in which to add a new model,
+                                         None will use current cloud
+        @param Optional[bool] use_existing:
+               None:  True if model_name exists on this controller
+               False: create a new model and keep=False, unless keep=True explicitly set
+               True:  connect to a model and keep=True, unless keep=False explicitly set
+        @param Optional[bool] keep:
+               None:  follows the value of use_existing
+               False: tracked model is destroyed at tests end
+               True:  tracked model remains once tests complete
+               --keep-models flag will override this options
+
+        Common Examples:
+        ----------------------------------
+        # make a new model with any juju name and destroy it when the tests are over
+        await ops_test.track_model("alias")
+
+        # make or reuse a model known to juju as "bob"
+        # don't destroy model if it existed, destroy it if it didn't already exist
+        await ops_test.track_model("alias", model_name="bob")
+        ----------------------------------
+        """
+        if alias in self._models:
+            raise ModelInUseError(f"Cannot add new model with alias '{alias}'")
+
+        if model_name and use_existing is None:
+            use_existing = await self._model_exists(model_name)
+
+        keep = bool(use_existing) if keep is None else keep
+        if use_existing:
+            if not model_name:
+                raise NotImplementedError(
+                    "Cannot use_existing model if model_name is unspecified"
+                )
+            model_state = await self._connect_to_model(
+                self.controller_name, model_name, keep
+            )
+        else:
+            cloud_name = cloud_name or self.cloud_name
+            model_name = model_name or self._generate_model_name()
+            model_state = await self._add_model(
+                self.controller_name, cloud_name, model_name, keep, **kwargs
+            )
+        self._models[alias] = model_state
+        return model_state.model
 
     async def log_model(self):
         """Log a summary of the status of the model."""
@@ -500,37 +772,92 @@ class OpsTest:
             log.info("juju-crashdump command was not found.")
             return False
 
-    async def _cleanup_model(self):
-        if not self.model:
+    async def _model_gone(self, model_name: Optional[str]):
+        if not model_name or not self._controller:
+            return
+        while await self._model_exists(model_name):
+            await asyncio.sleep(5.0)
+
+    async def forget_model(
+        self, alias: str, timeout: Optional[Union[float, int]] = None
+    ):
+        """
+        Forget a model and wait for it to be removed from the controller.
+        If the model is marked as kept, ops_tests forgets about this model immediately.
+        If the model is not marked as kept, ops_test will destroy the model.
+
+        @param                   str alias: alias of the model
+        @param Optional[float,int] timeout: how long to wait for it to be removed
+        """
+        if not self._controller:
+            log.error("No access to controller, skipping...")
             return
 
-        await self.log_model()
+        if alias not in self.models:
+            raise ModelNotFoundError(f"{alias} not found")
 
-        # NOTE (rgildein): Create juju-crashdump only if any tests failed,
-        # `juju-crashdump` flag is enabled and OpsTest.keep_model == False
-        if (
-            self.request.session.testsfailed > 0
-            and self.crash_dump
-            and self.keep_model is False
-        ):
-            await self.create_crash_dump()
+        with self.model_context(alias) as model:
+            await self.log_model()
+            model_name = model.info.name
 
-        if not self.keep_model:
-            # Forcibly destroy machines in case any units are in error.
-            for machine in self.model.machines.values():
-                try:
-                    log.info(f"Destroying machine {machine.id}")
-                    await machine.destroy(force=True)
-                except DeadEntityException as e:
-                    log.warning(e)
-                    log.warning("Machine already dead, skipping")
-            await self.model.disconnect()
-            log.info(f"Destroying model {self.model_name}")
-            await self._controller.destroy_model(self.model_name)
-        else:
-            await self.model.disconnect()
-        if self._controller:
-            await self._controller.disconnect()
+            # NOTE (rgildein): Create juju-crashdump only if any tests failed,
+            # `juju-crashdump` flag is enabled and OpsTest.keep_model == False
+            if (
+                self.request.session.testsfailed > 0
+                and self.crash_dump
+                and self.keep_model is False
+            ):
+                await self.create_crash_dump()
+
+            if not self.keep_model:
+                # Forcibly destroy applications/machines in case any units are in error.
+                for application in model.applications.values():
+                    try:
+                        log.info(f"Destroying application {application.name}")
+                        await application.destroy()
+                    except DeadEntityException as e:
+                        log.warning(e)
+                        log.warning("Application already dead, skipping")
+                    except JujuError as e:
+                        log.exception(e)
+
+                for machine in model.machines.values():
+                    try:
+                        log.info(f"Destroying machine {machine.id}")
+                        await machine.destroy(force=True)
+                    except DeadEntityException as e:
+                        log.warning(e)
+                        log.warning("Machine already dead, skipping")
+                    except JujuError as e:
+                        log.exception(e)
+                await model.disconnect()
+
+                log.info(f"Destroying model {model_name}")
+                await self._controller.destroy_model(model_name, force=True)
+                log.info(f"Waiting on model teardown {model_name}...")
+                await asyncio.wait_for(self._model_gone(model_name), timeout=timeout)
+            else:
+                await model.disconnect()
+
+        # stop managing this model now
+        log.info(f"Forgetting {alias}...")
+        self._models.pop(alias)
+        if alias is self.current_alias:
+            self._current_alias = None
+
+    async def _cleanup_models(self):
+        if not self.models:
+            return
+
+        # remove models from most recently made, to first made
+        aliases = list(reversed(self._models.keys()))
+        for models in aliases:
+            await self.forget_model(models)
+
+        await self._controller.disconnect()
+
+    # maintain backwards compatibility (though this was a private method)
+    _cleanup_model = _cleanup_models
 
     def abort(self, *args, **kwargs):
         """Fail the current test method and mark all remaining test methods as xfail.
@@ -546,7 +873,7 @@ class OpsTest:
         self.aborted = True
         pytest.fail(*args, **kwargs)
 
-    async def build_charm(self, charm_path):
+    async def build_charm(self, charm_path) -> Path:
         """Builds a single charm.
 
         This can handle charms using the older charms.reactive framework as
@@ -622,7 +949,7 @@ class OpsTest:
         charm_file_src.rename(charm_file_dst)
         return charm_file_dst
 
-    async def build_charms(self, *charm_paths):
+    async def build_charms(self, *charm_paths) -> Mapping[str, Path]:
         """Builds one or more charms in parallel.
 
         This can handle charms using the older charms.reactive framework as
@@ -720,7 +1047,7 @@ class OpsTest:
         """
 
         charm_name = (f"{owner}-" if owner else "") + self._charm_name(built_charm)
-        downloader = Charmhub(charm_name, channel)
+        downloader: Union[Charmhub, CharmStore] = Charmhub(charm_name, channel)
         if not downloader.exists:
             charm_name = (f"~{owner}/" if owner else "") + self._charm_name(built_charm)
             downloader = CharmStore(charm_name, channel)
@@ -773,7 +1100,7 @@ class OpsTest:
         if serial:
             cmd += ["--serial"]
 
-        cmd += ["--", "-m", self.model_name] + list(extra_args)
+        cmd += ["--"] + list(extra_args)
 
         log.info(
             "Deploying (and possibly building) bundle using juju-bundle command:"
