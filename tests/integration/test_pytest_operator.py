@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-
 log = logging.getLogger(__name__)
 
 
@@ -62,6 +61,48 @@ class TestPlugin:
         crashdumps = set(ops_test.tmp_path.glob("juju-crashdump-*.tar.xz"))
         assert len(crashdumps) > 0, "no crash dump was found"
 
+    async def test_2_create_delete_new_model(self, ops_test):
+        assert ops_test.model.applications.keys() == {
+            "reactive-framework",
+            "operator-framework",
+        }
+        prior_model = ops_test.model
+
+        model_alias = "secondary"
+        # create a new model
+        new_model = await ops_test.track_model(model_alias)
+        with ops_test.model_context(model_alias) as model:
+            assert model is new_model, "model_context should yield the new model"
+            assert model.info.name == ops_test.model_name
+            assert (
+                not model.applications
+            ), "There should be no applications in the model"
+            assert model is not prior_model, "Two models are different objects"
+            assert ops_test.model is model, "Should reference the context model"
+            await ops_test.forget_model(model_alias)  # removes the newly created model
+            assert ops_test.model is None, "Context Model reference is gone"
+
+        assert ops_test.model is prior_model, "Should reference base model"
+        assert prior_model and prior_model.applications.keys() == {
+            "reactive-framework",
+            "operator-framework",
+        }
+
+        # track the main model with a second alias, don't do this other than testing
+        model_name = prior_model.info.name
+        duplicate = await ops_test.track_model("duplicate", model_name=model_name)
+        assert duplicate.info.uuid == prior_model.info.uuid
+        await ops_test.forget_model("duplicate")
+
+    async def test_3_context_failure_reverts_model(self, ops_test):
+        model_alias = "secondary"
+        await ops_test.track_model(model_alias)
+        prior_alias = ops_test.current_alias
+        with pytest.raises(ZeroDivisionError):
+            with ops_test.model_context(model_alias):
+                raise ZeroDivisionError()
+        assert ops_test.current_alias == prior_alias
+
 
 async def test_func(ops_test):
     assert ops_test.model
@@ -81,6 +122,9 @@ async def test_run(ops_test):
     with pytest.raises(AssertionError) as exc_info:
         await ops_test.run("/bin/false", check=True, fail_msg="test")
     assert str(exc_info.value) == "test (1): "
+
+    stdin, revd = b"hello world", "dlrow olleh"
+    assert await ops_test.run("/usr/bin/rev", stdin=stdin) == (0, revd, "")
 
 
 @pytest.mark.abort_on_fail(abort_on_xfail=True)
