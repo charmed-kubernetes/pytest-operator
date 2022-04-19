@@ -55,5 +55,7 @@ jobs:
         python-version: 3.8
     - name: Setup operator test environment
       uses: charmed-kubernetes/actions-operator@main
+      with:
+        lxd-channel: 4.24/stable
     - name: Run integration tests
       run: tox -e integration
