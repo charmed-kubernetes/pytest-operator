@@ -830,14 +830,11 @@ class OpsTest:
                         log.warning("Machine already dead, skipping")
                     except JujuError as e:
                         log.exception(e)
-                await model.disconnect()
-
                 log.info(f"Destroying model {model_name}")
                 await self._controller.destroy_model(model_name, force=True)
                 log.info(f"Waiting on model teardown {model_name}...")
                 await asyncio.wait_for(self._model_gone(model_name), timeout=timeout)
-            else:
-                await model.disconnect()
+            await model.disconnect()
 
         # stop managing this model now
         log.info(f"Forgetting {alias}...")
