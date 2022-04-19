@@ -244,6 +244,7 @@ async def test_crash_dump_mode(monkeypatch, tmp_path_factory):
     model = MagicMock()
     model.machines.values.return_value = []
     model.disconnect = AsyncMock()
+    model.reset = AsyncMock()
     ops_test._init_keep_model = None
     ops_test._current_alias = "main"
     ops_test._models = {
@@ -254,7 +255,6 @@ async def test_crash_dump_mode(monkeypatch, tmp_path_factory):
     ops_test.crash_dump_output = None
     ops_test.log_model = AsyncMock()
     ops_test._controller = AsyncMock()
-    ops_test._model_gone = AsyncMock(return_value=None)
 
     # 0 tests failed
     mock_request.session.testsfailed = 0

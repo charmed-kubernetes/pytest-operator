@@ -41,8 +41,6 @@ import yaml
 from _pytest.config import Config
 from _pytest.config.argparsing import Parser
 from juju.client.jujudata import FileJujuData
-from juju.exceptions import DeadEntityException
-from juju.errors import JujuError
 from juju.model import Model, Controller
 
 log = logging.getLogger(__name__)
