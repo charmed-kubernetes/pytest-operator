@@ -772,12 +772,6 @@ class OpsTest:
             log.info("juju-crashdump command was not found.")
             return False
 
-    async def _model_gone(self, model_name: Optional[str]):
-        if not model_name or not self._controller:
-            return
-        while await self._model_exists(model_name):
-            await asyncio.sleep(5.0)
-
     async def forget_model(
         self, alias: str, timeout: Optional[Union[float, int]] = None
     ):
@@ -811,29 +805,13 @@ class OpsTest:
 
             if not self.keep_model:
                 # Forcibly destroy applications/machines in case any units are in error.
-                for application in model.applications.values():
-                    try:
-                        log.info(f"Destroying application {application.name}")
-                        await application.destroy()
-                    except DeadEntityException as e:
-                        log.warning(e)
-                        log.warning("Application already dead, skipping")
-                    except JujuError as e:
-                        log.exception(e)
-
-                for machine in model.machines.values():
-                    try:
-                        log.info(f"Destroying machine {machine.id}")
-                        await machine.destroy(force=True)
-                    except DeadEntityException as e:
-                        log.warning(e)
-                        log.warning("Machine already dead, skipping")
-                    except JujuError as e:
-                        log.exception(e)
-                log.info(f"Destroying model {model_name}")
+                for application in model.applications:
+                    log.info(f"Destroying application {application}")
+                for machine in model.machines:
+                    log.info(f"Destroying machine {machine}")
+                log.info(f"Waiting on {model_name} teardown...")
+                await model.reset(force=True)
                 await self._controller.destroy_model(model_name, force=True)
-                log.info(f"Waiting on model teardown {model_name}...")
-                await asyncio.wait_for(self._model_gone(model_name), timeout=timeout)
             await model.disconnect()
 
         # stop managing this model now
