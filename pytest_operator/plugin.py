@@ -809,8 +809,10 @@ class OpsTest:
                     log.info(f"Destroying machine {machine}")
                 log.info(f"Waiting on {model_name} teardown...")
                 await model.reset(force=True)
+                await model.disconnect()
                 await self._controller.destroy_model(model_name, force=True)
-            await model.disconnect()
+            else:
+                await model.disconnect()
 
         # stop managing this model now
         log.info(f"Forgetting {alias}...")
