@@ -4,6 +4,7 @@ from unittest.mock import Mock, AsyncMock, ANY, patch, call, MagicMock, Property
 from urllib.error import HTTPError
 from pathlib import Path
 from types import SimpleNamespace
+from websockets.exceptions import ConnectionClosed
 from zipfile import ZipFile
 import pytest
 
@@ -244,7 +245,7 @@ async def test_crash_dump_mode(monkeypatch, tmp_path_factory):
     model = MagicMock()
     model.machines.values.return_value = []
     model.disconnect = AsyncMock()
-    model.reset = AsyncMock()
+    model.block_until = AsyncMock()
     ops_test._init_keep_model = None
     ops_test._current_alias = "main"
     ops_test._models = {
@@ -434,9 +435,18 @@ async def test_fixture_set_up_automatic_model(
 
 @pytest.mark.parametrize("model_name", [None, "alt-model"])
 @pytest.mark.parametrize("cloud_name", [None, "alt-cloud"])
+@pytest.mark.parametrize(
+    "block_exception", [None, asyncio.TimeoutError(), ConnectionClosed(1, "test")]
+)
 @patch("pytest_operator.plugin.OpsTest.juju", autospec=True)
 async def test_fixture_create_remove_model(
-    juju_cmd, model_name, cloud_name, mock_juju, setup_request, tmp_path_factory
+    juju_cmd,
+    model_name,
+    cloud_name,
+    block_exception,
+    mock_juju,
+    setup_request,
+    tmp_path_factory,
 ):
     juju_cmd.return_value = (0, "", "")
     setup_request.session.testsfailed = 0
@@ -503,7 +513,9 @@ async def test_fixture_create_remove_model(
     # Created models shouldn't be kept
     assert not test_model.keep_model
 
-    await ops_test.forget_model(test_alias)
+    if block_exception:
+        mock_juju.model.block_until = AsyncMock(side_effect=block_exception)
+    await ops_test.forget_model(test_alias, timeout=1.0)
 
     # Should be back to managing only one model
     assert len(ops_test.models) == 1

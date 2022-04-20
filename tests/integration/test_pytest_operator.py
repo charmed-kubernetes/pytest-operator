@@ -92,7 +92,7 @@ class TestPlugin:
         model_name = prior_model.info.name
         duplicate = await ops_test.track_model("duplicate", model_name=model_name)
         assert duplicate.info.uuid == prior_model.info.uuid
-        await ops_test.forget_model("duplicate")
+        await ops_test.forget_model("duplicate", timeout=30, allow_failure=False)
 
     async def test_3_context_failure_reverts_model(self, ops_test):
         model_alias = "secondary"
