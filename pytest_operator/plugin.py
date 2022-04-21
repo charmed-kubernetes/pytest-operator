@@ -41,9 +41,7 @@ import yaml
 from _pytest.config import Config
 from _pytest.config.argparsing import Parser
 from juju.client.jujudata import FileJujuData
-from juju.exceptions import DeadEntityException
-from juju.errors import JujuError
-from juju.model import Model, Controller
+from juju.model import Model, Controller, websockets
 
 log = logging.getLogger(__name__)
 
@@ -772,22 +770,22 @@ class OpsTest:
             log.info("juju-crashdump command was not found.")
             return False
 
-    async def _model_gone(self, model_name: Optional[str]):
-        if not model_name or not self._controller:
-            return
-        while await self._model_exists(model_name):
-            await asyncio.sleep(5.0)
-
     async def forget_model(
-        self, alias: str, timeout: Optional[Union[float, int]] = None
+        self,
+        alias: str,
+        timeout: Optional[Union[float, int]] = None,
+        allow_failure: bool = True,
     ):
         """
         Forget a model and wait for it to be removed from the controller.
         If the model is marked as kept, ops_tests forgets about this model immediately.
         If the model is not marked as kept, ops_test will destroy the model.
+        If timeout is None don't wait on the model to be completely destroyed
 
         @param                   str alias: alias of the model
-        @param Optional[float,int] timeout: how long to wait for it to be removed
+        @param Optional[float,int] timeout: how long to wait for it to be removed,
+                                            if None, don't block waiting for success
+        @param          bool allow_failure: if False, failures raise an exception
         """
         if not self._controller:
             log.error("No access to controller, skipping...")
@@ -810,32 +808,8 @@ class OpsTest:
                 await self.create_crash_dump()
 
             if not self.keep_model:
-                # Forcibly destroy applications/machines in case any units are in error.
-                for application in model.applications.values():
-                    try:
-                        log.info(f"Destroying application {application.name}")
-                        await application.destroy()
-                    except DeadEntityException as e:
-                        log.warning(e)
-                        log.warning("Application already dead, skipping")
-                    except JujuError as e:
-                        log.exception(e)
-
-                for machine in model.machines.values():
-                    try:
-                        log.info(f"Destroying machine {machine.id}")
-                        await machine.destroy(force=True)
-                    except DeadEntityException as e:
-                        log.warning(e)
-                        log.warning("Machine already dead, skipping")
-                    except JujuError as e:
-                        log.exception(e)
-                await model.disconnect()
-
-                log.info(f"Destroying model {model_name}")
+                await self._reset(model, allow_failure, timeout=timeout)
                 await self._controller.destroy_model(model_name, force=True)
-                log.info(f"Waiting on model teardown {model_name}...")
-                await asyncio.wait_for(self._model_gone(model_name), timeout=timeout)
             else:
                 await model.disconnect()
 
@@ -844,6 +818,38 @@ class OpsTest:
         self._models.pop(alias)
         if alias is self.current_alias:
             self._current_alias = None
+
+    @staticmethod
+    async def _reset(model: Model, allow_failure, timeout: Optional[int] = None):
+        # Forcibly destroy applications/machines in case any units are in error.
+        log.info(f"Resetting model {model.info.name}...")
+        for app in model.applications.values():
+            log.info(f"   Destroying application {app.name}")
+            await app.destroy()
+
+        for machine in model.machines.values():
+            log.info(f"  Destroying machine {machine.id}")
+            await machine.destroy(force=True)
+
+        if timeout is None:
+            log.info("Not waiting on reset to complete.")
+            return
+
+        try:
+            await model.block_until(
+                lambda: len(model.machines) == 0 and len(model.applications) == 0,
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            log.exception(f"Timeout resetting {model.info.name}")
+            if not allow_failure:
+                raise
+        except websockets.ConnectionClosed:
+            log.error(f"Disconnected while resetting {model.info.name}")
+            if not allow_failure:
+                raise
+        else:
+            log.info(f"Reset {model.info.name} completed successfully.")
 
     async def _cleanup_models(self):
         if not self.models:
