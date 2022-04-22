@@ -41,6 +41,8 @@ import yaml
 from _pytest.config import Config
 from _pytest.config.argparsing import Parser
 from juju.client.jujudata import FileJujuData
+from juju.exceptions import DeadEntityException
+from juju.errors import JujuError
 from juju.model import Model, Controller, websockets
 
 log = logging.getLogger(__name__)
@@ -822,14 +824,22 @@ class OpsTest:
     @staticmethod
     async def _reset(model: Model, allow_failure, timeout: Optional[int] = None):
         # Forcibly destroy applications/machines in case any units are in error.
-        log.info(f"Resetting model {model.info.name}...")
-        for app in model.applications.values():
-            log.info(f"   Destroying application {app.name}")
-            await app.destroy()
+        async def _destroy(entity: str, **kwargs):
+            for key, entity in getattr(model, entity).items():
+                try:
+                    log.info(f"   Destroying {entity} {key}")
+                    await entity.destroy(**kwargs)
+                except DeadEntityException as e:
+                    log.warning(e)
+                    log.warning(f"{entity.title()} already dead, skipping")
+                except JujuError as e:
+                    log.exception(e)
+                    if not allow_failure:
+                        raise
 
-        for machine in model.machines.values():
-            log.info(f"  Destroying machine {machine.id}")
-            await machine.destroy(force=True)
+        log.info(f"Resetting model {model.info.name}...")
+        await _destroy("applications")
+        await _destroy("machines", force=True)
 
         if timeout is None:
             log.info("Not waiting on reset to complete.")
