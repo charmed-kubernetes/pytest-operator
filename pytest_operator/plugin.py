@@ -824,14 +824,14 @@ class OpsTest:
     @staticmethod
     async def _reset(model: Model, allow_failure, timeout: Optional[int] = None):
         # Forcibly destroy applications/machines in case any units are in error.
-        async def _destroy(entity: str, **kwargs):
-            for key, entity in getattr(model, entity).items():
+        async def _destroy(entity_name: str, **kwargs):
+            for key, entity in getattr(model, entity_name).items():
                 try:
-                    log.info(f"   Destroying {entity} {key}")
+                    log.info(f"   Destroying {entity_name} {key}")
                     await entity.destroy(**kwargs)
                 except DeadEntityException as e:
                     log.warning(e)
-                    log.warning(f"{entity.title()} already dead, skipping")
+                    log.warning(f"{entity_name.title()} already dead, skipping")
                 except JujuError as e:
                     log.exception(e)
                     if not allow_failure:
