@@ -223,8 +223,7 @@ def abort_on_fail(request):
         ops_test.aborted = True
 
 
-@pytest.fixture(scope="module")
-@pytest.mark.asyncio
+@pytest_asyncio.fixture(scope="module")
 async def ops_test(request, tmp_path_factory):
     check_deps("juju", "charmcraft")
     ops_test = OpsTest(request, tmp_path_factory)
