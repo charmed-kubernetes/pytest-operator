@@ -223,8 +223,7 @@ def abort_on_fail(request):
         ops_test.aborted = True
 
 
-@pytest.fixture(scope="module")
-@pytest.mark.asyncio
+@pytest_asyncio.fixture(scope="module")
 async def ops_test(request, tmp_path_factory):
     check_deps("juju", "charmcraft")
     ops_test = OpsTest(request, tmp_path_factory)
@@ -581,17 +580,13 @@ class OpsTest:
 
         return await self.run("juju", *args, **kwargs)
 
-    async def _add_model(
-        self, controller_name, cloud_name, model_name, keep=False, **kwargs
-    ):
+    async def _add_model(self, cloud_name, model_name, keep=False, **kwargs):
         """
         Creates a model used by the test framework which would normally be destroyed
         after the tests are run in the module.
         """
         controller = self._controller
-        if not controller:
-            controller = Controller()
-            await controller.connect(controller_name)
+        controller_name = controller.controller_name
         if not cloud_name:
             # if not provided, try the default cloud name
             cloud_name = self._init_cloud_name
@@ -657,11 +652,14 @@ class OpsTest:
         alias = self._orig_model_alias
         if not self.controller_name:
             self.controller_name = self.jujudata.current_controller()
+        assert self.controller_name, "No controller selected for ops_test"
+        if not self._controller:
+            self._controller = Controller()
+            await self._controller.connect(self.controller_name)
         if not self._init_model_name:
             # no --model flag specified, automatically generate a model
             config = self.read_model_config(self._init_model_config)
             model_state = await self._add_model(
-                self.controller_name,
                 self._init_cloud_name,
                 self.default_model_name,
                 config=config,
@@ -671,9 +669,6 @@ class OpsTest:
             model_state = await self._connect_to_model(
                 self.controller_name, self._init_model_name
             )
-
-        if not self._controller:
-            self._controller = await model_state.model.get_controller()
 
         self._models[alias] = model_state
         self._current_alias = alias
@@ -734,9 +729,7 @@ class OpsTest:
         else:
             cloud_name = cloud_name or self.cloud_name
             model_name = model_name or self._generate_model_name()
-            model_state = await self._add_model(
-                self.controller_name, cloud_name, model_name, keep, **kwargs
-            )
+            model_state = await self._add_model(cloud_name, model_name, keep, **kwargs)
         self._models[alias] = model_state
         return model_state.model
 
@@ -812,8 +805,7 @@ class OpsTest:
             if not self.keep_model:
                 await self._reset(model, allow_failure, timeout=timeout)
                 await self._controller.destroy_model(model_name, force=True)
-            else:
-                await model.disconnect()
+            await model.disconnect()
 
         # stop managing this model now
         log.info(f"Forgetting {alias}...")
@@ -862,9 +854,6 @@ class OpsTest:
             log.info(f"Reset {model.info.name} completed successfully.")
 
     async def _cleanup_models(self):
-        if not self.models:
-            return
-
         # remove models from most recently made, to first made
         aliases = list(reversed(self._models.keys()))
         for models in aliases:
