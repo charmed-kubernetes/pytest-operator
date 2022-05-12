@@ -387,10 +387,27 @@ class ModelState:
         return f"{self.controller_name}:{self.model_name}"
 
 
+@dataclasses.dataclass
+class Bundle:
+    name: str
+    channel: str = "stable"
+    arch: str = "all"
+    series: str = "all"
+
+    @property
+    def juju_download_args(self):
+        return [
+            f"--{field.name}={getattr(self, field.name)}"
+            for field in dataclasses.fields(Bundle)
+            if field.default is not dataclasses.MISSING
+        ]
+
+
 class OpsTest:
     """Utility class for testing Operator Charms."""
 
     _instance = None  # store instance, so we can tell if it's been used yet
+    Bundle = Bundle  # objects can be created with `ops_test.Bundle(...)`
 
     def __init__(self, request, tmp_path_factory):
         self.request = request
@@ -1113,7 +1130,41 @@ class OpsTest:
         )
         await self.run(*cmd, check=True)
 
-    def render_bundle(self, bundle, context=None, **kwcontext):
+    async def render_overlays(
+        self, *overlays: Union[Bundle, Path], **context: str
+    ) -> List[Path]:
+        """
+        Render a set of templated bundles using Jinja2.
+
+        This can be used to populate built charm paths or config values.
+        :param overlays:  Bundle or Path to overlay file.
+        :param **context: Additional optional context as keyword args.
+        Returns the Path for the rendered bundle.
+        """
+        bundles_dst_dir = self.tmp_path / "bundles"
+        bundles_dst_dir.mkdir(exist_ok=True)
+        bundles = []
+        for overlay in overlays:
+            if isinstance(overlay, Path):
+                content = overlay.read_text()
+            elif isinstance(overlay, Bundle):
+                filepath = f"{bundles_dst_dir}/{overlay.name}.bundle"
+                await self.juju(
+                    "download",
+                    overlay.name,
+                    *overlay.juju_download_args,
+                    f"--filepath={filepath}",
+                    check=True,
+                    fail_msg=f"Couldn't download {overlay.name} bundle",
+                )
+                bundle_zip = ZipPath(filepath, "bundle.yaml")
+                content = bundle_zip.read_text()
+            else:
+                raise TypeError("overlay {} isn't Bundle or Path".format(type(overlay)))
+            bundles.append(content)
+        return self.render_bundles(*bundles, **context)
+
+    def render_bundle(self, bundle, context=None, **kwcontext) -> Path:
         """Render a templated bundle using Jinja2.
 
         This can be used to populate built charm paths or config values.

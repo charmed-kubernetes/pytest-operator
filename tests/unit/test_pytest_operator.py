@@ -248,6 +248,28 @@ async def test_plugin_fetch_resources(tmp_path_factory, resource_charm):
     assert downloaded == expected_downloads
 
 
+async def test_render_overlays(tmp_path_factory):
+    ops_test = plugin.OpsTest(Mock(**{"module.__name__": "test"}), tmp_path_factory)
+    ops_test.jujudata = Mock()
+    ops_test.jujudata.path = ""
+
+    with pytest.raises(TypeError):
+        await ops_test.render_overlays("abcd")
+
+    path_overlay = ops_test.tmp_path / "path.yaml"
+    path_overlay.write_text("a: {{ num }}")
+    overlays = await ops_test.render_overlays(path_overlay, num=1)
+    assert overlays[0].read_text() == "a: 1"
+
+    bundle_overlay = ops_test.Bundle("downloaded")
+    (ops_test.tmp_path / "bundles").mkdir(exist_ok=True)
+    with ZipFile(ops_test.tmp_path / "bundles" / "downloaded.bundle", "w") as zf:
+        zf.writestr("bundle.yaml", "a: {{ num }}")
+    with patch.object(ops_test, "juju", AsyncMock(return_value=(0, "", ""))):
+        overlays = await ops_test.render_overlays(bundle_overlay, num=1)
+    assert overlays[0].read_text() == "a: 1"
+
+
 async def test_crash_dump_mode(monkeypatch, tmp_path_factory):
     """Test running juju-crashdump in OpsTest.cleanup."""
     patch = monkeypatch.setattr
