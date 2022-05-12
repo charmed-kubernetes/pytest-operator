@@ -182,18 +182,32 @@ async def test_plugin_build_resources(tmp_path_factory):
     ops_test = plugin.OpsTest(Mock(**{"module.__name__": "test"}), tmp_path_factory)
     ops_test.jujudata = Mock()
     ops_test.jujudata.path = ""
+    dst_dir = ops_test.tmp_path / "resources"
+    expected_resources = [1, 2, 3]
 
     with pytest.raises(FileNotFoundError):
         build_script = Path("tests") / "data" / "build_resources_does_not_exist.sh"
         await ops_test.build_resources(build_script)
 
     build_script = Path("tests") / "data" / "build_resources_errors.sh"
-    resources = await ops_test.build_resources(build_script)
+    with patch.object(
+        ops_test, "run", AsyncMock(return_value=(1, "", "error"))
+    ) as mock_run:
+        resources = await ops_test.build_resources(build_script)
     assert not resources, ""
+    mock_run.assert_called_once_with(
+        "sudo", str(build_script.absolute()), cwd=dst_dir, check=False
+    )
 
     build_script = Path("tests") / "data" / "build_resources.sh"
-    resources = await ops_test.build_resources(build_script)
-    assert resources and all(rsc.exists() for rsc in resources)
+    with patch(
+        "pytest_operator.plugin.Path.glob", Mock(return_value=expected_resources)
+    ):
+        with patch.object(
+            ops_test, "run", AsyncMock(return_value=(0, "okay", ""))
+        ) as mock_run:
+            resources = await ops_test.build_resources(build_script)
+    assert resources and resources == expected_resources
 
 
 def test_plugin_get_resources(tmp_path_factory, resource_charm):
