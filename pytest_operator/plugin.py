@@ -26,8 +26,8 @@ from typing import (
     MutableMapping,
     Mapping,
     Optional,
+    TypeVar,
     Tuple,
-    TypeAlias,
     Union,
 )
 from urllib.request import urlretrieve, urlopen
@@ -388,33 +388,37 @@ class ModelState:
         return f"{self.controller_name}:{self.model_name}"
 
 
-@dataclasses.dataclass
-class Bundle:
-    """Represents a charmhub bundle."""
-
-    name: str
-    channel: str = "stable"
-    arch: str = "all"
-    series: str = "all"
-
-    @property
-    def juju_download_args(self):
-        """Create cli arguments used in juju download to download bundle to disk."""
-        return [
-            f"--{field.name}={getattr(self, field.name)}"
-            for field in dataclasses.fields(Bundle)
-            if field.default is not dataclasses.MISSING
-        ]
-
-
-BundleOpt: TypeAlias = Union[str, Path, Bundle]
+BundleOpt = TypeVar("BundleOpt", str, Path, "OpsTest.Bundle")
+Timeout = TypeVar("Timeout", float, int)
 
 
 class OpsTest:
     """Utility class for testing Operator Charms."""
 
-    _instance = None  # store instance, so we can tell if it's been used yet
-    Bundle = Bundle  # objects can be created with `ops_test.Bundle(...)`
+    # store instance, so we can tell if it's been used yet
+    _instance: Optional["OpsTest"] = None
+
+    # objects can be created with `ops_test.Bundle(...)`
+    # since fixtures are autoloaded for pytest users,
+    # this exposes the class instantiation through
+    #     ops_test.Bundle(...)
+    @dataclasses.dataclass
+    class Bundle:
+        """Represents a charmhub bundle."""
+
+        name: str
+        channel: str = "stable"
+        arch: str = "all"
+        series: str = "all"
+
+        @property
+        def juju_download_args(self):
+            """Create cli arguments used in juju download to download bundle to disk."""
+            return [
+                f"--{field.name}={getattr(self, field.name)}"
+                for field in dataclasses.fields(OpsTest.Bundle)
+                if field.default is not dataclasses.MISSING
+            ]
 
     def __init__(self, request, tmp_path_factory):
         self.request = request
@@ -792,7 +796,7 @@ class OpsTest:
     async def forget_model(
         self,
         alias: str,
-        timeout: Optional[Union[float, int]] = None,
+        timeout: Optional[Timeout] = None,
         allow_failure: bool = True,
     ):
         """
@@ -838,7 +842,7 @@ class OpsTest:
             self._current_alias = None
 
     @staticmethod
-    async def _reset(model: Model, allow_failure, timeout: Optional[int] = None):
+    async def _reset(model: Model, allow_failure, timeout: Optional[Timeout] = None):
         # Forcibly destroy applications/machines in case any units are in error.
         async def _destroy(entity_name: str, **kwargs):
             for key, entity in getattr(model, entity_name).items():
@@ -852,6 +856,7 @@ class OpsTest:
                     log.exception(e)
                     if not allow_failure:
                         raise
+            return None
 
         log.info(f"Resetting model {model.info.name}...")
         await _destroy("applications")
@@ -1158,7 +1163,7 @@ class OpsTest:
                 content = bundle
             elif isinstance(bundle, Path):
                 content = bundle.read_text()
-            elif isinstance(bundle, Bundle):
+            elif isinstance(bundle, OpsTest.Bundle):
                 filepath = f"{bundles_dst_dir}/{bundle.name}.bundle"
                 await self.juju(
                     "download",

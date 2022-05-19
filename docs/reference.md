@@ -253,9 +253,10 @@ provide as many bundles as necessary from any of the follow types:
     * can be a `str` that is `os.pathlike` and ends with an extension of `yaml`, `yml`, or even `.yaml.j2`
   * `Path`
     * Path to any text based file which can be loaded by `yaml.safe_load(..)`
-  * `Bundle`
+  * `OpsTest.Bundle`
     * bundles can be downloaded from charmhub using a Bundle object.
-      The bundle is downloaded, unpacked, and its `bundle.yaml` file is used as the content
+      The bundle is downloaded, unpacked, and its `bundle.yaml` file is used as the content.
+      
       See [ops_test.Bundle](#Bundle)
 
 
