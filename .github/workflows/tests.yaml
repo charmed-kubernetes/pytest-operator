@@ -10,37 +10,29 @@ jobs:
     with:
       fail-on-error: "true"
 
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-    - name: Check out code
-      uses: actions/checkout@v2
-    - name: Setup Python
-      uses: actions/setup-python@v2
-      with:
-        python-version: 3.9
-    - name: Install Dependencies
-      run: |
-        pip install tox
-    - name: Run lint
-      run: tox -e lint
-
   unit:
-    name: Unit Tests
+    name: Unit Tests & Lint
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python:
+          - "3.8"
+          - "3.9"
+          - "3.10"
     steps:
     - name: Check out code
       uses: actions/checkout@v2
     - name: Setup Python
       uses: actions/setup-python@v2
       with:
-        python-version: 3.9
+        python-version: ${{ matrix.python }}
     - name: Install Dependencies
       run: |
         pip install tox
     - name: Run unit tests
       run: tox -e unit
+    - name: Run lint
+      run: tox -e lint
 
   integration-test:
     name: Integration test with LXD
@@ -55,7 +47,5 @@ jobs:
         python-version: 3.8
     - name: Setup operator test environment
       uses: charmed-kubernetes/actions-operator@main
-      with:
-        lxd-channel: 4.24/stable
     - name: Run integration tests
       run: tox -e integration
