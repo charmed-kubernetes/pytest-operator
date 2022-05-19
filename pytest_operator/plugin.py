@@ -26,8 +26,8 @@ from typing import (
     MutableMapping,
     Mapping,
     Optional,
-    overload,
     Tuple,
+    TypeAlias,
     Union,
 )
 from urllib.request import urlretrieve, urlopen
@@ -390,7 +390,7 @@ class ModelState:
 
 @dataclasses.dataclass
 class Bundle:
-    """Represents a juju bundle."""
+    """Represents a charmhub bundle."""
 
     name: str
     channel: str = "stable"
@@ -405,6 +405,9 @@ class Bundle:
             for field in dataclasses.fields(Bundle)
             if field.default is not dataclasses.MISSING
         ]
+
+
+BundleOpt: TypeAlias = Union[str, Path, Bundle]
 
 
 class OpsTest:
@@ -1134,43 +1137,16 @@ class OpsTest:
         )
         await self.run(*cmd, check=True)
 
-    @overload
-    async def async_render_bundles(self, *bundles: Bundle, **context) -> List[Path]:
+    async def async_render_bundles(self, *bundles: BundleOpt, **context) -> List[Path]:
         """
         Render a set of templated bundles using Jinja2.
 
         This can be used to populate built charm paths or config values.
-        @param bundles: ops.Bundle objects defining charmhub properties for downloading
+        @param *bundles: objects that are YAML content, pathlike, or charmhub reference
         @param **context: Additional optional context as keyword args.
         @returns list of paths to rendered bundles.
         """
         ...
-
-    @overload
-    async def async_render_bundles(self, *bundles: Path, **context) -> List[Path]:
-        """
-        Render a set of templated bundles using Jinja2.
-
-        This can be used to populate built charm paths or config values.
-        @param bundles: Path objects for the template
-        @param **context: Additional optional context as keyword args.
-        @returns list of paths to rendered bundles.
-        """
-        ...
-
-    @overload
-    async def async_render_bundles(self, *bundles: str, **context) -> List[Path]:
-        """
-        Render a set of templated bundles using Jinja2.
-
-        This can be used to populate built charm paths or config values.
-        @param bundles: str objects with thats either pathlike or YAML content
-        @param **context: Additional optional context as keyword args.
-        @returns list of paths to rendered bundles.
-        """
-        ...
-
-    async def async_render_bundles(self, *bundles, **context):
         bundles_dst_dir = self.tmp_path / "bundles"
         bundles_dst_dir.mkdir(exist_ok=True)
         re_bundlefile = re.compile(r"\.(yaml|yml)(\.j2)?$")

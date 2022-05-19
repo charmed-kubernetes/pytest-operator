@@ -240,17 +240,23 @@ A helper which renders multiple bundles at once.
 Returns a list of `pathlib.Path` instances for each bundle, in the same order as the
 args.
 
-#### `async def async_render_bundles(self, *bundles: Bundle, **context) -> List[Path]:`
-#### `async def async_render_bundles(self, *bundles: Path, **context) -> List[Path]:`
-#### `async def async_render_bundles(self, *bundles: str, **context) -> List[Path]:`
+#### `async def async_render_bundles(self, *bundles: BundleOpt, **context) -> List[Path]:`
 
 A helper which renders a set of templated bundles using Jinja2.
 
 Returns a list of `pathlib.Path` instances for each bundle, in the same order as the
 overlays.
 
-With this method, bundles can be downloaded from charmhub using a Bundle object.  
-See [ops_test.Bundle](#Bundle)
+provide as many bundles as necessary from any of the follow types:
+  * `str`
+    * can be YAML content
+    * can be a `str` that is `os.pathlike` and ends with an extension of `yaml`, `yml`, or even `.yaml.j2`
+  * `Path`
+    * Path to any text based file which can be loaded by `yaml.safe_load(..)`
+  * `Bundle`
+    * bundles can be downloaded from charmhub using a Bundle object.
+      The bundle is downloaded, unpacked, and its `bundle.yaml` file is used as the content
+      See [ops_test.Bundle](#Bundle)
 
 
 #### `async def run(self, *cmd: str, cwd: Optional[os.PathLike] = None, check: bool = False, fail_msg: Optional[str] = None, stdin: Optional[bytes] = None)`
