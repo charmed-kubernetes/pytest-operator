@@ -389,6 +389,8 @@ class ModelState:
 
 @dataclasses.dataclass
 class Bundle:
+    """Represents a juju bundle."""
+
     name: str
     channel: str = "stable"
     arch: str = "all"
@@ -396,6 +398,7 @@ class Bundle:
 
     @property
     def juju_download_args(self):
+        """Create cli arguments used in juju download to download bundle to disk."""
         return [
             f"--{field.name}={getattr(self, field.name)}"
             for field in dataclasses.fields(Bundle)
@@ -1130,39 +1133,84 @@ class OpsTest:
         )
         await self.run(*cmd, check=True)
 
-    async def render_overlays(
-        self, *overlays: Union[Bundle, Path], **context: str
-    ) -> List[Path]:
+    async def async_render_bundles(self, *bundles: Bundle, **context) -> List[Path]:
         """
         Render a set of templated bundles using Jinja2.
 
         This can be used to populate built charm paths or config values.
-        :param overlays:  Bundle or Path to overlay file.
-        :param **context: Additional optional context as keyword args.
-        Returns the Path for the rendered bundle.
+        @param bundles: ops.Bundle objects defining charmhub properties for downloading
+        @param **context: Additional optional context as keyword args.
+        @returns list of paths to rendered bundles.
         """
+        ...
+
+    async def async_render_bundles(self, *bundles: Path, **context) -> List[Path]:
+        """
+        Render a set of templated bundles using Jinja2.
+
+        This can be used to populate built charm paths or config values.
+        @param bundles: Path objects for the template
+        @param **context: Additional optional context as keyword args.
+        @returns list of paths to rendered bundles.
+        """
+        ...
+
+    async def async_render_bundles(self, *bundles: str, **context) -> List[Path]:
+        """
+        Render a set of templated bundles using Jinja2.
+
+        This can be used to populate built charm paths or config values.
+        @param bundles: str objects with thats either pathlike or YAML content
+        @param **context: Additional optional context as keyword args.
+        @returns list of paths to rendered bundles.
+        """
+        ...
+
+    async def async_render_bundles(self, *bundles, **context):
         bundles_dst_dir = self.tmp_path / "bundles"
         bundles_dst_dir.mkdir(exist_ok=True)
-        bundles = []
-        for overlay in overlays:
-            if isinstance(overlay, Path):
-                content = overlay.read_text()
-            elif isinstance(overlay, Bundle):
-                filepath = f"{bundles_dst_dir}/{overlay.name}.bundle"
+        re_bundlefile = re.compile(r"\.(yaml|yml)(\.j2)?$")
+        to_render = []
+        for bundle in bundles:
+            if isinstance(bundle, str) and re_bundlefile.search(bundle):
+                content = Path(bundle).read_text()
+            elif isinstance(bundle, str):
+                content = bundle
+            elif isinstance(bundle, Path):
+                content = bundle.read_text()
+            elif isinstance(bundle, Bundle):
+                filepath = f"{bundles_dst_dir}/{bundle.name}.bundle"
                 await self.juju(
                     "download",
-                    overlay.name,
-                    *overlay.juju_download_args,
+                    bundle.name,
+                    *bundle.juju_download_args,
                     f"--filepath={filepath}",
                     check=True,
-                    fail_msg=f"Couldn't download {overlay.name} bundle",
+                    fail_msg=f"Couldn't download {bundle.name} bundle",
                 )
                 bundle_zip = ZipPath(filepath, "bundle.yaml")
                 content = bundle_zip.read_text()
             else:
-                raise TypeError("overlay {} isn't Bundle or Path".format(type(overlay)))
-            bundles.append(content)
-        return self.render_bundles(*bundles, **context)
+                raise TypeError("bundle {} isn't a known Type".format(type(bundle)))
+            to_render.append(content)
+        return self.render_bundles(*to_render, **context)
+
+    def render_bundles(self, *bundles, context=None, **kwcontext) -> List[Path]:
+        """Render one or more templated bundles using Jinja2.
+
+        This can be used to populate built charm paths or config values.
+
+        :param *bundles (str or Path): One or more bundle Paths or YAML contents.
+        :param context (dict): Optional context mapping.
+        :param **kwcontext: Additional optional context as keyword args.
+
+        Returns a list of Paths for the rendered bundles.
+        """
+        # Jinja2 does support async, but rendering bundles should be relatively quick.
+        return [
+            self.render_bundle(bundle, context=context, **kwcontext)
+            for bundle in bundles
+        ]
 
     def render_bundle(self, bundle, context=None, **kwcontext) -> Path:
         """Render a templated bundle using Jinja2.
@@ -1196,23 +1244,6 @@ class OpsTest:
         dst = bundles_dst_dir / bundle_name
         dst.write_text(rendered)
         return dst
-
-    def render_bundles(self, *bundles, context=None, **kwcontext):
-        """Render one or more templated bundles using Jinja2.
-
-        This can be used to populate built charm paths or config values.
-
-        :param *bundles (str or Path): One or more bundle Paths or YAML contents.
-        :param context (dict): Optional context mapping.
-        :param **kwcontext: Additional optional context as keyword args.
-
-        Returns a list of Paths for the rendered bundles.
-        """
-        # Jinja2 does support async, but rendering bundles should be relatively quick.
-        return [
-            self.render_bundle(bundle_path, context=context, **kwcontext)
-            for bundle_path in bundles
-        ]
 
     async def build_lib(self, lib_path):
         """Build a Python library (sdist) for use in a test.

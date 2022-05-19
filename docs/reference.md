@@ -144,6 +144,14 @@ The name of the juju model referenced by the current aliased model.
 If the alias is set as the first model, that name will reflect its automatically generated
 name or the name provided by the `--model` command-line parameter.
 
+#### `Bundle`
+
+Dataclass which represents a juju bundle.
+
+```python
+  bundle = ops_test.Bundle("charmed-kubernetes", "latest/edge")
+```
+
 ### Methods
 
 #### `async def build_charm(self, charm_path)`
@@ -231,6 +239,18 @@ A helper which renders multiple bundles at once.
 
 Returns a list of `pathlib.Path` instances for each bundle, in the same order as the
 args.
+
+#### `async def async_render_bundles(self, *bundles: Bundle, **context) -> List[Path]:`
+#### `async def async_render_bundles(self, *bundles: Path, **context) -> List[Path]:`
+#### `async def async_render_bundles(self, *bundles: str, **context) -> List[Path]:`
+
+A helper which renders a set of templated bundles using Jinja2.
+
+Returns a list of `pathlib.Path` instances for each bundle, in the same order as the
+overlays.
+
+With this method, bundles can be downloaded from charmhub using a Bundle object.  
+See [ops_test.Bundle](#Bundle)
 
 
 #### `async def run(self, *cmd: str, cwd: Optional[os.PathLike] = None, check: bool = False, fail_msg: Optional[str] = None, stdin: Optional[bytes] = None)`

@@ -248,26 +248,35 @@ async def test_plugin_fetch_resources(tmp_path_factory, resource_charm):
     assert downloaded == expected_downloads
 
 
-async def test_render_overlays(tmp_path_factory):
+async def test_async_render_bundles(tmp_path_factory):
     ops_test = plugin.OpsTest(Mock(**{"module.__name__": "test"}), tmp_path_factory)
     ops_test.jujudata = Mock()
     ops_test.jujudata.path = ""
 
     with pytest.raises(TypeError):
-        await ops_test.render_overlays("abcd")
+        await ops_test.async_render_bundles(1234)
 
-    path_overlay = ops_test.tmp_path / "path.yaml"
-    path_overlay.write_text("a: {{ num }}")
-    overlays = await ops_test.render_overlays(path_overlay, num=1)
-    assert overlays[0].read_text() == "a: 1"
+    str_template = "a: {{ num }}"
+    bundles = await ops_test.async_render_bundles(str_template, num=1)
+    assert bundles[0].read_text() == "a: 1"
 
-    bundle_overlay = ops_test.Bundle("downloaded")
+    template_file = ops_test.tmp_path / "str_path.yml.j2"
+    template_file.write_text("a: {{ num }}")
+    bundles = await ops_test.async_render_bundles(str(template_file), num=1)
+    assert bundles[0].read_text() == "a: 1"
+
+    template_file = ops_test.tmp_path / "path.yaml"
+    template_file.write_text("a: {{ num }}")
+    bundles = await ops_test.async_render_bundles(template_file, num=1)
+    assert bundles[0].read_text() == "a: 1"
+
+    download_bundle = ops_test.Bundle("downloaded")
     (ops_test.tmp_path / "bundles").mkdir(exist_ok=True)
     with ZipFile(ops_test.tmp_path / "bundles" / "downloaded.bundle", "w") as zf:
         zf.writestr("bundle.yaml", "a: {{ num }}")
     with patch.object(ops_test, "juju", AsyncMock(return_value=(0, "", ""))):
-        overlays = await ops_test.render_overlays(bundle_overlay, num=1)
-    assert overlays[0].read_text() == "a: 1"
+        bundles = await ops_test.async_render_bundles(download_bundle, num=1)
+    assert bundles[0].read_text() == "a: 1"
 
 
 async def test_crash_dump_mode(monkeypatch, tmp_path_factory):
