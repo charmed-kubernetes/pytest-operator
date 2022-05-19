@@ -26,6 +26,7 @@ from typing import (
     MutableMapping,
     Mapping,
     Optional,
+    overload,
     Tuple,
     Union,
 )
@@ -1133,6 +1134,7 @@ class OpsTest:
         )
         await self.run(*cmd, check=True)
 
+    @overload
     async def async_render_bundles(self, *bundles: Bundle, **context) -> List[Path]:
         """
         Render a set of templated bundles using Jinja2.
@@ -1144,6 +1146,7 @@ class OpsTest:
         """
         ...
 
+    @overload
     async def async_render_bundles(self, *bundles: Path, **context) -> List[Path]:
         """
         Render a set of templated bundles using Jinja2.
@@ -1155,6 +1158,7 @@ class OpsTest:
         """
         ...
 
+    @overload
     async def async_render_bundles(self, *bundles: str, **context) -> List[Path]:
         """
         Render a set of templated bundles using Jinja2.
