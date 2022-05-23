@@ -1363,3 +1363,29 @@ class OpsTest:
             self.render_charm(charm_path, include, exclude, context, **kwcontext)
             for charm_path in charm_paths
         ]
+
+    @contextlib.asynccontextmanager
+    async def fast_forward(
+        self, fast_interval: str = "10s", slow_interval: Optional[str] = None
+    ):
+        """Temporarily speed up update-status firing rate for the current model.
+
+        Returns an async context manager that temporarily sets update-status
+        firing rate to `fast_interval`.
+        If provided, when the context exits the update-status firing rate will
+        be set to `slow_interval`. Otherwise, it will be set to the previous
+        value.
+        """
+        model = self.model
+        if not model:
+            raise RuntimeError("No model currently set.")
+
+        update_interval_key = "update-status-hook-interval"
+        if slow_interval:
+            interval_after = slow_interval
+        else:
+            interval_after = (await model.get_config())[update_interval_key]
+
+        await model.set_config({update_interval_key: fast_interval})
+        yield
+        await model.set_config({update_interval_key: interval_after})
