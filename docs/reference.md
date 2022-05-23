@@ -248,6 +248,23 @@ Runs a Juju CLI command.
 Useful for cases where python-libjuju sees things differently than the Juju CLI. Will set
 `JUJU_MODEL`, so manually passing in `-m model-name` is unnecessary.
 
+#### `async def fast_forward(self, fast_interval: str = "10s", slow_interval: Optional[str] = None)`
+
+Temporarily speed up update-status firing rate for the current model.
+Returns an async context manager that temporarily sets update-status firing rate to `fast_interval`.
+If provided, when the context exits the update-status firing rate will be set to `slow_interval`. Otherwise, it will be set to the previous value.
+
+* If `fast_interval` is provided, the update-status firing rate will be set to that value upon entering the context. Default is 10s.
+* If `slow_interval` is provided, after the context exits the update-status firing rate will be set to that value; otherwise, to the value it had before the context was entered.
+
+It is effectively a shortcut for:
+```python
+    await ops_test.model.set_config({"update-status-hook-interval": <fast-interval>})
+
+    # do something
+
+    await ops_test.model.set_config({"update-status-hook-interval": <slow-interval>})
+```
 
 #### `def abort(self, *args, **kwargs)`
 
