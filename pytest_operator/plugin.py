@@ -26,6 +26,7 @@ from typing import (
     MutableMapping,
     Mapping,
     Optional,
+    TypeVar,
     Tuple,
     Union,
 )
@@ -225,8 +226,7 @@ def abort_on_fail(request):
         ops_test.aborted = True
 
 
-@pytest.fixture(scope="module")
-@pytest.mark.asyncio
+@pytest_asyncio.fixture(scope="module")
 async def ops_test(request, tmp_path_factory):
     check_deps("juju", "charmcraft")
     ops_test = OpsTest(request, tmp_path_factory)
@@ -390,10 +390,37 @@ class ModelState:
         return f"{self.controller_name}:{self.model_name}"
 
 
+BundleOpt = TypeVar("BundleOpt", str, Path, "OpsTest.Bundle")
+Timeout = TypeVar("Timeout", float, int)
+
+
 class OpsTest:
     """Utility class for testing Operator Charms."""
 
-    _instance = None  # store instance, so we can tell if it's been used yet
+    # store instance, so we can tell if it's been used yet
+    _instance: Optional["OpsTest"] = None
+
+    # objects can be created with `ops_test.Bundle(...)`
+    # since fixtures are autoloaded for pytest users,
+    # this exposes the class instantiation through
+    #     ops_test.Bundle(...)
+    @dataclasses.dataclass
+    class Bundle:
+        """Represents a charmhub bundle."""
+
+        name: str
+        channel: str = "stable"
+        arch: str = "all"
+        series: str = "all"
+
+        @property
+        def juju_download_args(self):
+            """Create cli arguments used in juju download to download bundle to disk."""
+            return [
+                f"--{field.name}={getattr(self, field.name)}"
+                for field in dataclasses.fields(OpsTest.Bundle)
+                if field.default is not dataclasses.MISSING
+            ]
 
     def __init__(self, request, tmp_path_factory):
         self.request = request
@@ -583,17 +610,13 @@ class OpsTest:
 
         return await self.run("juju", *args, **kwargs)
 
-    async def _add_model(
-        self, controller_name, cloud_name, model_name, keep=False, **kwargs
-    ):
+    async def _add_model(self, cloud_name, model_name, keep=False, **kwargs):
         """
         Creates a model used by the test framework which would normally be destroyed
         after the tests are run in the module.
         """
         controller = self._controller
-        if not controller:
-            controller = Controller()
-            await controller.connect(controller_name)
+        controller_name = controller.controller_name
         if not cloud_name:
             # if not provided, try the default cloud name
             cloud_name = self._init_cloud_name
@@ -659,11 +682,14 @@ class OpsTest:
         alias = self._orig_model_alias
         if not self.controller_name:
             self.controller_name = self.jujudata.current_controller()
+        assert self.controller_name, "No controller selected for ops_test"
+        if not self._controller:
+            self._controller = Controller()
+            await self._controller.connect(self.controller_name)
         if not self._init_model_name:
             # no --model flag specified, automatically generate a model
             config = self.read_model_config(self._init_model_config)
             model_state = await self._add_model(
-                self.controller_name,
                 self._init_cloud_name,
                 self.default_model_name,
                 config=config,
@@ -673,9 +699,6 @@ class OpsTest:
             model_state = await self._connect_to_model(
                 self.controller_name, self._init_model_name
             )
-
-        if not self._controller:
-            self._controller = await model_state.model.get_controller()
 
         self._models[alias] = model_state
         self._current_alias = alias
@@ -736,9 +759,7 @@ class OpsTest:
         else:
             cloud_name = cloud_name or self.cloud_name
             model_name = model_name or self._generate_model_name()
-            model_state = await self._add_model(
-                self.controller_name, cloud_name, model_name, keep, **kwargs
-            )
+            model_state = await self._add_model(cloud_name, model_name, keep, **kwargs)
         self._models[alias] = model_state
         return model_state.model
 
@@ -777,7 +798,7 @@ class OpsTest:
     async def forget_model(
         self,
         alias: str,
-        timeout: Optional[Union[float, int]] = None,
+        timeout: Optional[Timeout] = None,
         allow_failure: bool = True,
     ):
         """
@@ -814,8 +835,7 @@ class OpsTest:
             if not self.keep_model:
                 await self._reset(model, allow_failure, timeout=timeout)
                 await self._controller.destroy_model(model_name, force=True)
-            else:
-                await model.disconnect()
+            await model.disconnect()
 
         # stop managing this model now
         log.info(f"Forgetting {alias}...")
@@ -824,7 +844,7 @@ class OpsTest:
             self._current_alias = None
 
     @staticmethod
-    async def _reset(model: Model, allow_failure, timeout: Optional[int] = None):
+    async def _reset(model: Model, allow_failure, timeout: Optional[Timeout] = None):
         # Forcibly destroy applications/machines in case any units are in error.
         async def _destroy(entity_name: str, **kwargs):
             for key, entity in getattr(model, entity_name).items():
@@ -838,6 +858,7 @@ class OpsTest:
                     log.exception(e)
                     if not allow_failure:
                         raise
+            return None
 
         log.info(f"Resetting model {model.info.name}...")
         await _destroy("applications")
@@ -864,9 +885,6 @@ class OpsTest:
             log.info(f"Reset {model.info.name} completed successfully.")
 
     async def _cleanup_models(self):
-        if not self.models:
-            return
-
         # remove models from most recently made, to first made
         aliases = list(reversed(self._models.keys()))
         for models in aliases:
@@ -1126,7 +1144,62 @@ class OpsTest:
         )
         await self.run(*cmd, check=True)
 
-    def render_bundle(self, bundle, context=None, **kwcontext):
+    async def async_render_bundles(self, *bundles: BundleOpt, **context) -> List[Path]:
+        """
+        Render a set of templated bundles using Jinja2.
+
+        This can be used to populate built charm paths or config values.
+        @param *bundles: objects that are YAML content, pathlike, or charmhub reference
+        @param **context: Additional optional context as keyword args.
+        @returns list of paths to rendered bundles.
+        """
+        ...
+        bundles_dst_dir = self.tmp_path / "bundles"
+        bundles_dst_dir.mkdir(exist_ok=True)
+        re_bundlefile = re.compile(r"\.(yaml|yml)(\.j2)?$")
+        to_render = []
+        for bundle in bundles:
+            if isinstance(bundle, str) and re_bundlefile.search(bundle):
+                content = Path(bundle).read_text()
+            elif isinstance(bundle, str):
+                content = bundle
+            elif isinstance(bundle, Path):
+                content = bundle.read_text()
+            elif isinstance(bundle, OpsTest.Bundle):
+                filepath = f"{bundles_dst_dir}/{bundle.name}.bundle"
+                await self.juju(
+                    "download",
+                    bundle.name,
+                    *bundle.juju_download_args,
+                    f"--filepath={filepath}",
+                    check=True,
+                    fail_msg=f"Couldn't download {bundle.name} bundle",
+                )
+                bundle_zip = ZipPath(filepath, "bundle.yaml")
+                content = bundle_zip.read_text()
+            else:
+                raise TypeError("bundle {} isn't a known Type".format(type(bundle)))
+            to_render.append(content)
+        return self.render_bundles(*to_render, **context)
+
+    def render_bundles(self, *bundles, context=None, **kwcontext) -> List[Path]:
+        """Render one or more templated bundles using Jinja2.
+
+        This can be used to populate built charm paths or config values.
+
+        :param *bundles (str or Path): One or more bundle Paths or YAML contents.
+        :param context (dict): Optional context mapping.
+        :param **kwcontext: Additional optional context as keyword args.
+
+        Returns a list of Paths for the rendered bundles.
+        """
+        # Jinja2 does support async, but rendering bundles should be relatively quick.
+        return [
+            self.render_bundle(bundle, context=context, **kwcontext)
+            for bundle in bundles
+        ]
+
+    def render_bundle(self, bundle, context=None, **kwcontext) -> Path:
         """Render a templated bundle using Jinja2.
 
         This can be used to populate built charm paths or config values.
@@ -1158,23 +1231,6 @@ class OpsTest:
         dst = bundles_dst_dir / bundle_name
         dst.write_text(rendered)
         return dst
-
-    def render_bundles(self, *bundles, context=None, **kwcontext):
-        """Render one or more templated bundles using Jinja2.
-
-        This can be used to populate built charm paths or config values.
-
-        :param *bundles (str or Path): One or more bundle Paths or YAML contents.
-        :param context (dict): Optional context mapping.
-        :param **kwcontext: Additional optional context as keyword args.
-
-        Returns a list of Paths for the rendered bundles.
-        """
-        # Jinja2 does support async, but rendering bundles should be relatively quick.
-        return [
-            self.render_bundle(bundle_path, context=context, **kwcontext)
-            for bundle_path in bundles
-        ]
 
     async def build_lib(self, lib_path):
         """Build a Python library (sdist) for use in a test.
