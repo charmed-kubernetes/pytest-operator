@@ -45,6 +45,8 @@ from juju.exceptions import DeadEntityException
 from juju.errors import JujuError
 from juju.model import Model, Controller, websockets
 
+from pytest_operator.relation_data import get_relation_data, RelationData
+
 log = logging.getLogger(__name__)
 
 
@@ -1333,3 +1335,16 @@ class OpsTest:
         await model.set_config({update_interval_key: fast_interval})
         yield
         await model.set_config({update_interval_key: interval_after})
+
+    async def get_relation_data(self, *, provider_endpoint: str, requirer_endpoint: str,
+                                include_juju_keys: bool = False) -> RelationData:
+        """Gett relation databag contents for both sides of a juju relation.
+
+        Usage:
+        >>> data = await ops_test.get_relation_data(
+        ...    provider_endpoint='prometheus/0:ingress',
+        ...    requirer_endpoint='traefik/1:ingress-per-unit')
+        >>> assert data.provider.application_data == {'foo': 'bar', 'baz': 'qux'}
+
+        """
+        return await get_relation_data(provider_endpoint, requirer_endpoint, include_juju_keys)
