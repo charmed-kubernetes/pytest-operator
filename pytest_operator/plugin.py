@@ -1336,9 +1336,14 @@ class OpsTest:
         yield
         await model.set_config({update_interval_key: interval_after})
 
-    async def get_relation_data(self, *, provider_endpoint: str, requirer_endpoint: str,
-                                include_juju_keys: bool = False) -> RelationData:
-        """Gett relation databag contents for both sides of a juju relation.
+    async def get_relation_data(
+        self,
+        *,
+        provider_endpoint: str,
+        requirer_endpoint: str,
+        include_juju_keys: bool = False,
+    ) -> RelationData:
+        """Get relation databag contents for both sides of a juju relation.
 
         Usage:
         >>> data = await ops_test.get_relation_data(
@@ -1347,4 +1352,6 @@ class OpsTest:
         >>> assert data.provider.application_data == {'foo': 'bar', 'baz': 'qux'}
 
         """
-        return await get_relation_data(provider_endpoint, requirer_endpoint, include_juju_keys)
+        return await get_relation_data(
+            provider_endpoint, requirer_endpoint, include_juju_keys
+        )

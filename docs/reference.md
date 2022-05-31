@@ -266,6 +266,21 @@ It is effectively a shortcut for:
     await ops_test.model.set_config({"update-status-hook-interval": <slow-interval>})
 ```
 
+#### `async def get_relation_data(self, *, provider_endpoint: str, requirer_endpoint: str, include_juju_keys: bool = False) -> RelationData`
+
+Retrieves the relation databags for two given endpoints.
+This can be used to verify that the relation data (unit, app) for either side has
+the expected shape.
+
+```python
+data = await ops_test.get_relation_data(
+    provider_endpoint='my_app/0:ingress',
+    requirer_endpoint='other_app/1:ingress')
+assert data.provider.application_data == {'foo': 'bar', 
+                                          'baz': 'qux'}
+```
+
+
 #### `def abort(self, *args, **kwargs)`
 
 Fail the current test method and mark all remaining test methods as xfail.
