@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<!--
--- # Copyright 2022-2023 Canonical.
--- # See LICENSE file for licensing details.
---
-  -->
-<project version="4">
-  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.8 (pytest-operator)" project-jdk-type="Python SDK" />
-</project>
