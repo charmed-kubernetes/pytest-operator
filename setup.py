@@ -23,6 +23,7 @@ setup(
     keywords=["pytest", "py.test", "operators", "yaml", "asyncio"],
     name="pytest-operator",
     packages=find_packages(include=["pytest_operator"]),
+    package_data={'pytest_operator': ['py.typed']},
     url="https://github.com/charmed-kubernetes/pytest-operator",
     version="0.21.0",
     zip_safe=True,
