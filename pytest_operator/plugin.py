@@ -1036,7 +1036,7 @@ class OpsTest:
             if rsc.arch
         }
 
-    async def build_resources(self, build_script: Path):
+    async def build_resources(self, build_script: Path, with_sudo: bool = True):
         build_script = build_script.absolute()
         if not build_script.exists():
             raise FileNotFoundError(
@@ -1046,10 +1046,8 @@ class OpsTest:
         log.info("Build Resources...")
         dst_dir = self.tmp_path / "resources"
         dst_dir.mkdir(exist_ok=True)
-        start = timer()
-        rc, stdout, stderr = await self.run(
-            *shlex.split(f"sudo {build_script}"), cwd=dst_dir, check=False
-        )
+        start, cmd = timer(), ("sudo " if with_sudo else "") + str(build_script)
+        rc, stdout, stderr = await self.run(*shlex.split(cmd), cwd=dst_dir, check=False)
         if rc != 0:
             log.warning(f"{build_script} failed: {(stderr or stdout).strip()}")
         else:
