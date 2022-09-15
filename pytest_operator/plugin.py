@@ -511,10 +511,12 @@ class OpsTest:
         return current_state.config if current_state else None
 
     @property
-    def model(self) -> Optional[Model]:
+    def model(self) -> Model:
         """Represents the current model."""
         current_state = self.current_alias and self._models.get(self.current_alias)
-        return current_state.model if current_state else None
+        if current_state:
+            return current_state.model
+        raise ModelNotFoundError("Cannot obtain current model")
 
     @property
     def model_full_name(self) -> Optional[str]:
@@ -523,10 +525,12 @@ class OpsTest:
         return current_state.full_name if current_state else None
 
     @property
-    def model_name(self) -> Optional[str]:
+    def model_name(self) -> str:
         """Represents the current model name."""
         current_state = self.current_alias and self._models.get(self.current_alias)
-        return current_state.model_name if current_state else None
+        if current_state:
+            return current_state.model_name
+        raise ModelNotFoundError("Cannot obtain current model")
 
     @property
     def cloud_name(self) -> Optional[str]:

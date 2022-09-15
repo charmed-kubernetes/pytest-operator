@@ -422,7 +422,8 @@ async def test_fixture_set_up_existing_model(
 ):
     setup_request.config.option.model = "this-model"
     ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
-    assert ops_test.model is None
+    with pytest.raises(plugin.ModelNotFoundError):
+        _ = ops_test.model
 
     await ops_test._setup_model()
     mock_juju.model.connect.assert_called_with("this-controller:this-model")
@@ -462,7 +463,8 @@ async def test_fixture_set_up_automatic_model(
     model_name = "this-auto-generated-model-name"
     mock_default_model_name.return_value = model_name
     ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
-    assert ops_test.model is None
+    with pytest.raises(plugin.ModelNotFoundError):
+        _ = ops_test.model
 
     await ops_test._setup_model()
     mock_juju.controller.add_model.assert_called_with(
