@@ -447,7 +447,7 @@ class OpsTest:
 
         # These will be set by _setup_model
         self.jujudata = None
-        self._controller: Optional[Controller] = None
+        self._controller: Controller = None
 
         # maintains a set of all models connected by this fixture
         # use an OrderedDict so that the first model made is destroyed last.
@@ -467,7 +467,8 @@ class OpsTest:
             # if the there's a failure after yielding, don't fail to
             # switch back to the prior alias but still raise whatever
             # error condition occurred through the context
-            self._switch(prior, raise_not_found=False)
+            if prior is not None:
+                self._switch(prior, raise_not_found=False)
 
     def _switch(self, alias: str, raise_not_found=True) -> Model:
         if alias in self._models:
@@ -505,38 +506,38 @@ class OpsTest:
         return tmp_path
 
     @property
+    def _current_model(self) -> ModelState:
+        if not self.current_alias:
+            raise ModelNotFoundError("No model currently selected")
+        current_state = self._models.get(self.current_alias)
+        if not current_state:
+            raise ModelNotFoundError(f"model '{self.current_alias}' not found")
+        return current_state
+
+    @property
     def model_config(self) -> Optional[dict]:
         """Represents the config used when adding the model."""
-        current_state = self.current_alias and self._models.get(self.current_alias)
-        return current_state.config if current_state else None
+        return self._current_model.config
 
     @property
     def model(self) -> Model:
         """Represents the current model."""
-        current_state = self.current_alias and self._models.get(self.current_alias)
-        if current_state:
-            return current_state.model
-        raise ModelNotFoundError(f"model '{self.current_alias}' not found")
+        return self._current_model.model
 
     @property
-    def model_full_name(self) -> Optional[str]:
+    def model_full_name(self) -> str:
         """Represents the current model's full name."""
-        current_state = self.current_alias and self._models.get(self.current_alias)
-        return current_state.full_name if current_state else None
+        return self._current_model.full_name
 
     @property
     def model_name(self) -> str:
         """Represents the current model name."""
-        current_state = self.current_alias and self._models.get(self.current_alias)
-        if current_state:
-            return current_state.model_name
-        raise ModelNotFoundError(f"model '{self.current_alias}' not found")
+        return self._current_model.model_name
 
     @property
     def cloud_name(self) -> Optional[str]:
         """Represents the current model's cloud name."""
-        current_state = self.current_alias and self._models.get(self.current_alias)
-        return current_state.cloud_name if current_state else None
+        return self._current_model.cloud_name
 
     @property
     def keep_model(self) -> bool:
@@ -842,13 +843,13 @@ class OpsTest:
         # stop managing this model now
         log.info(f"Forgetting {alias}...")
         self._models.pop(alias)
-        if alias is self.current_alias:
+        if alias == self.current_alias:
             self._current_alias = None
 
     @staticmethod
     async def _reset(model: Model, allow_failure, timeout: Optional[Timeout] = None):
         # Forcibly destroy applications/machines in case any units are in error.
-        async def _destroy(entity_name: str, **kwargs):
+        async def _destroy(entity_name: str, **kwargs):  # type: ignore[return]
             for key, entity in getattr(model, entity_name).items():
                 try:
                     log.info(f"   Destroying {entity_name} {key}")
@@ -860,7 +861,6 @@ class OpsTest:
                     log.exception(e)
                     if not allow_failure:
                         raise
-            return None
 
         log.info(f"Resetting model {model.info.name}...")
         await _destroy("applications")
@@ -1252,7 +1252,12 @@ class OpsTest:
 
         log.info(f"Building library {lib_path}")
         returncode, stdout, stderr = await self.run(
-            sys.executable, "setup.py", "sdist", "-d", libs_dst_dir, cwd=lib_path_abs
+            sys.executable,
+            "setup.py",
+            "sdist",
+            "-d",
+            str(libs_dst_dir),
+            cwd=lib_path_abs,
         )
         if returncode != 0:
             raise RuntimeError(

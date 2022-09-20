@@ -85,7 +85,9 @@ class TestCharmhub:
         assert ch.exists
 
     def test_does_not_exist(self, info_api):
-        info_api.side_effect = HTTPError(url="", code=404, msg="", hdrs=None, fp=None)
+        info_api.side_effect = HTTPError(
+            url="", code=404, msg="", hdrs={}, fp=None  # type: ignore[arg-type]
+        )
         ch = plugin.Charmhub("etcd", "latest/edge")
         assert not ch.exists
 
@@ -145,7 +147,9 @@ class TestCharmstore:
         assert ch.exists
 
     def test_does_not_exist(self, info_api):
-        info_api.side_effect = HTTPError(url="", code=404, msg="", hdrs=None, fp=None)
+        info_api.side_effect = HTTPError(
+            url="", code=404, msg="", hdrs={}, fp=None  # type: ignore[arg-type]
+        )
         ch = plugin.CharmStore("cs:etcd", "edge")
         assert not ch.exists
 
@@ -258,7 +262,7 @@ async def test_async_render_bundles(tmp_path_factory):
     ops_test.jujudata.path = ""
 
     with pytest.raises(TypeError):
-        await ops_test.async_render_bundles(1234)
+        await ops_test.async_render_bundles(1234)  # type: ignore[type-var]
 
     str_template = "a: {{ num }}"
     bundles = await ops_test.async_render_bundles(str_template, num=1)
@@ -298,12 +302,12 @@ async def test_crash_dump_mode(monkeypatch, tmp_path_factory):
     ops_test._init_keep_model = None
     ops_test._current_alias = "main"
     ops_test._models = {
-        ops_test.current_alias: plugin.ModelState(
+        ops_test._current_alias: plugin.ModelState(
             model, False, "test", "local", "model"
         )
     }
     ops_test.crash_dump_output = None
-    ops_test.log_model = AsyncMock()
+    patch(ops_test, "log_model", AsyncMock())
     ops_test._controller = AsyncMock()
 
     # 0 tests failed
@@ -317,7 +321,7 @@ async def test_crash_dump_mode(monkeypatch, tmp_path_factory):
     # 1 tests failed
     ops_test._current_alias = "main"
     ops_test._models = {
-        ops_test.current_alias: plugin.ModelState(
+        ops_test._current_alias: plugin.ModelState(
             model, False, "test", "local", "model"
         )
     }
@@ -347,6 +351,7 @@ async def test_create_crash_dump(monkeypatch, tmp_path_factory):
 
     patch = monkeypatch.setattr
     patch(plugin.OpsTest, "run", mock_run)
+    patch(plugin.OpsTest, "model_full_name", "admin:cloud/main")
     patch(plugin, "log", mock_log := MagicMock())
     ops_test = plugin.OpsTest(Mock(**{"module.__name__": "test"}), tmp_path_factory)
     await ops_test.create_crash_dump()
@@ -419,6 +424,22 @@ def setup_request(request, mock_juju):
     mock_request.config.option.model_config = None
     mock_request.config.option.keep_models = False
     yield mock_request
+
+
+@pytest.mark.parametrize(
+    "attr", ["model", "model_name", "model_full_name", "model_config", "cloud_name"]
+)
+async def test_fixture_no_existing_model(
+    mock_juju, setup_request, tmp_path_factory, attr
+):
+    setup_request.config.option.model = "this-model"
+    ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
+    with pytest.raises(plugin.ModelNotFoundError, match="No model currently selected"):
+        _ = getattr(ops_test, attr)
+
+    ops_test._current_alias = "bogus"
+    with pytest.raises(plugin.ModelNotFoundError, match="model 'bogus' not found"):
+        _ = getattr(ops_test, attr)
 
 
 async def test_fixture_set_up_existing_model(
