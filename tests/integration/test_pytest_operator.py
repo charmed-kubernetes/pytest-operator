@@ -83,9 +83,7 @@ class TestPlugin:
             assert ops_test.model is model, "Should reference the context model"
             await ops_test.forget_model(model_alias)  # removes the newly created model
 
-            with pytest.raises(
-                ModelNotFoundError, match="No model currently selected"
-            ):
+            with pytest.raises(ModelNotFoundError, match="No model currently selected"):
                 _ = ops_test.model
 
         assert ops_test.model is prior_model, "Should reference base model"
