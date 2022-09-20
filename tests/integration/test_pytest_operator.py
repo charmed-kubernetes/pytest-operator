@@ -84,7 +84,7 @@ class TestPlugin:
             await ops_test.forget_model(model_alias)  # removes the newly created model
 
             with pytest.raises(
-                ModelNotFoundError, match=f"No model currently selected"
+                ModelNotFoundError, match="No model currently selected"
             ):
                 _ = ops_test.model
 
