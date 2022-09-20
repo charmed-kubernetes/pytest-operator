@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from pytest_operator.plugin import OpsTest
+from pytest_operator.plugin import OpsTest, ModelNotFoundError
 
 log = logging.getLogger(__name__)
 
@@ -82,7 +82,9 @@ class TestPlugin:
             assert model is not prior_model, "Two models are different objects"
             assert ops_test.model is model, "Should reference the context model"
             await ops_test.forget_model(model_alias)  # removes the newly created model
-            assert ops_test.model is None, "Context Model reference is gone"
+
+            with pytest.raises(ModelNotFoundError, match=f"model '{model_alias}' not found"):
+                _ = ops_test.model
 
         assert ops_test.model is prior_model, "Should reference base model"
         assert prior_model and prior_model.applications.keys() == {

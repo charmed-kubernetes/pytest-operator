@@ -516,7 +516,7 @@ class OpsTest:
         current_state = self.current_alias and self._models.get(self.current_alias)
         if current_state:
             return current_state.model
-        raise ModelNotFoundError("Cannot obtain current model")
+        raise ModelNotFoundError(f"model '{self.current_alias}' not found")
 
     @property
     def model_full_name(self) -> Optional[str]:
@@ -530,7 +530,7 @@ class OpsTest:
         current_state = self.current_alias and self._models.get(self.current_alias)
         if current_state:
             return current_state.model_name
-        raise ModelNotFoundError("Cannot obtain current model")
+        raise ModelNotFoundError(f"model '{self.current_alias}' not found")
 
     @property
     def cloud_name(self) -> Optional[str]:
@@ -819,7 +819,7 @@ class OpsTest:
             return
 
         if alias not in self.models:
-            raise ModelNotFoundError(f"{alias} not found")
+            raise ModelNotFoundError(f"model '{self.current_alias}' not found")
 
         with self.model_context(alias) as model:
             await self.log_model()
