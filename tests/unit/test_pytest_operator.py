@@ -251,6 +251,10 @@ async def test_plugin_fetch_resources(tmp_path_factory, resource_charm):
 async def test_async_render_bundles(tmp_path_factory):
     ops_test = plugin.OpsTest(Mock(**{"module.__name__": "test"}), tmp_path_factory)
     ops_test.jujudata = Mock()
+    ops_test._current_alias = "main"
+    mock_model = ops_test._models[ops_test._current_alias] = Mock()
+    mock_model.model_name = ops_test.default_model_name
+    mock_model.tmp_path = None
     ops_test.jujudata.path = ""
 
     with pytest.raises(TypeError):

@@ -1153,7 +1153,6 @@ class OpsTest:
         @param **context: Additional optional context as keyword args.
         @returns list of paths to rendered bundles.
         """
-        ...
         bundles_dst_dir = self.tmp_path / "bundles"
         bundles_dst_dir.mkdir(exist_ok=True)
         re_bundlefile = re.compile(r"\.(yaml|yml)(\.j2)?$")
