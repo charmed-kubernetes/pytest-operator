@@ -577,8 +577,10 @@ class OpsTest:
         env = {**os.environ}
         if self.jujudata:
             env["JUJU_DATA"] = self.jujudata.path
-        if self.model_full_name:
+        try:
             env["JUJU_MODEL"] = self.model_full_name
+        except ModelNotFoundError:
+            pass
 
         if not isinstance(stdin, bytes) and stdin is not None:
             raise TypeError("'stdin' parameter must be a Optional[bytes] typed")
