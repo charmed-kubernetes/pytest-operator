@@ -33,6 +33,8 @@ jobs:
       run: tox -e unit
     - name: Run lint
       run: tox -e lint
+    - name: Run static analysis
+      run: tox -e static-plugin,static-unit
 
   integration-test:
     name: Integration test with LXD

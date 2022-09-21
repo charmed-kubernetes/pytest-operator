@@ -177,7 +177,7 @@ def event_loop():
 
 
 # Plugin load order can't be set, replace asyncio directly
-pytest_asyncio.plugin.event_loop = event_loop
+pytest_asyncio.plugin.event_loop = event_loop  # type: ignore
 
 
 def pytest_collection_modifyitems(session, config, items):
@@ -447,7 +447,7 @@ class OpsTest:
 
         # These will be set by _setup_model
         self.jujudata = None
-        self._controller: Controller = None
+        self._controller: Optional[Controller] = None
 
         # maintains a set of all models connected by this fixture
         # use an OrderedDict so that the first model made is destroyed last.
@@ -621,6 +621,7 @@ class OpsTest:
         after the tests are run in the module.
         """
         controller = self._controller
+        assert controller is not None  # needed for type checker
         controller_name = controller.controller_name
         if not cloud_name:
             # if not provided, try the default cloud name
@@ -646,7 +647,9 @@ class OpsTest:
         """
         returns True when the model_name exists in the model.
         """
-        all_models = await self._controller.list_models()
+        controller = self._controller
+        assert controller is not None  # needed for type checker
+        all_models = await controller.list_models()
         return model_name in all_models
 
     @staticmethod
@@ -881,7 +884,7 @@ class OpsTest:
             log.exception(f"Timeout resetting {model.info.name}")
             if not allow_failure:
                 raise
-        except websockets.ConnectionClosed:
+        except websockets.ConnectionClosed:  # type: ignore
             log.error(f"Disconnected while resetting {model.info.name}")
             if not allow_failure:
                 raise
@@ -894,7 +897,9 @@ class OpsTest:
         for models in aliases:
             await self.forget_model(models)
 
-        await self._controller.disconnect()
+        controller = self._controller
+        assert controller is not None  # needed for type checker
+        await controller.disconnect()
 
     # maintain backwards compatibility (though this was a private method)
     _cleanup_model = _cleanup_models
