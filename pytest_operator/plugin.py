@@ -506,7 +506,7 @@ class OpsTest:
         return tmp_path
 
     @property
-    def _current_model(self) -> ModelState:
+    def _current_model_state(self) -> ModelState:
         if not self.current_alias:
             raise ModelNotFoundError("No model currently selected")
         current_state = self._models.get(self.current_alias)
@@ -517,27 +517,27 @@ class OpsTest:
     @property
     def model_config(self) -> Optional[dict]:
         """Represents the config used when adding the model."""
-        return self._current_model.config
+        return self._current_model_state.config
 
     @property
     def model(self) -> Model:
         """Represents the current model."""
-        return self._current_model.model
+        return self._current_model_state.model
 
     @property
     def model_full_name(self) -> str:
         """Represents the current model's full name."""
-        return self._current_model.full_name
+        return self._current_model_state.full_name
 
     @property
     def model_name(self) -> str:
         """Represents the current model name."""
-        return self._current_model.model_name
+        return self._current_model_state.model_name
 
     @property
     def cloud_name(self) -> Optional[str]:
         """Represents the current model's cloud name."""
-        return self._current_model.cloud_name
+        return self._current_model_state.cloud_name
 
     @property
     def keep_model(self) -> bool:
@@ -822,7 +822,7 @@ class OpsTest:
             return
 
         if alias not in self.models:
-            raise ModelNotFoundError(f"model '{self.current_alias}' not found")
+            raise ModelNotFoundError(f"model '{alias}' not found")
 
         with self.model_context(alias) as model:
             await self.log_model()
