@@ -508,7 +508,8 @@ async def test_fixture_set_up_automatic_model(
 @pytest.mark.parametrize("model_name", [None, "alt-model"])
 @pytest.mark.parametrize("cloud_name", [None, "alt-cloud"])
 @pytest.mark.parametrize(
-    "block_exception", [None, asyncio.TimeoutError(), ConnectionClosed(None, None)]
+    "block_exception",
+    [None, asyncio.TimeoutError(), ConnectionClosed(1, "test")],  # type: ignore
 )
 @patch("pytest_operator.plugin.OpsTest.juju", autospec=True)
 async def test_fixture_create_remove_model(
