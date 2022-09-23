@@ -505,11 +505,26 @@ async def test_fixture_set_up_automatic_model(
     assert len(ops_test.models) == 1
 
 
+class MockConnectionClosed(ConnectionClosed):
+    """defines new type of ConnectionClosed exception.
+
+    websockets.ConnectionClosed takes different forms
+    in python 3.8, 3.9 and beyond and doesn't yield well to
+    static-analysis. This exception can be raised in its stead
+    by the tests but is still treated in the plugin as a
+    ConnectionClosed typed exception.
+    """
+
+    def __init__(self, *_args, **_kwds) -> None:
+        # intentionally don't construct the underlying exception
+        pass
+
+
 @pytest.mark.parametrize("model_name", [None, "alt-model"])
 @pytest.mark.parametrize("cloud_name", [None, "alt-cloud"])
 @pytest.mark.parametrize(
     "block_exception",
-    [None, asyncio.TimeoutError(), ConnectionClosed(1, "test")],  # type: ignore
+    [None, asyncio.TimeoutError(), MockConnectionClosed()],
 )
 @patch("pytest_operator.plugin.OpsTest.juju", autospec=True)
 async def test_fixture_create_remove_model(
