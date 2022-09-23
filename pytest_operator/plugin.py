@@ -884,7 +884,7 @@ class OpsTest:
             log.exception(f"Timeout resetting {model.info.name}")
             if not allow_failure:
                 raise
-        except websockets.ConnectionClosed:  # type: ignore
+        except websockets.ConnectionClosed:
             log.error(f"Disconnected while resetting {model.info.name}")
             if not allow_failure:
                 raise
