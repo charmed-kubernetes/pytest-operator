@@ -177,7 +177,7 @@ def event_loop():
 
 
 # Plugin load order can't be set, replace asyncio directly
-pytest_asyncio.plugin.event_loop = event_loop
+pytest_asyncio.plugin.event_loop = event_loop  # type: ignore
 
 
 def pytest_collection_modifyitems(session, config, items):
@@ -467,7 +467,8 @@ class OpsTest:
             # if the there's a failure after yielding, don't fail to
             # switch back to the prior alias but still raise whatever
             # error condition occurred through the context
-            self._switch(prior, raise_not_found=False)
+            if prior is not None:
+                self._switch(prior, raise_not_found=False)
 
     def _switch(self, alias: str, raise_not_found=True) -> Model:
         if alias in self._models:
@@ -505,34 +506,38 @@ class OpsTest:
         return tmp_path
 
     @property
+    def _current_model_state(self) -> ModelState:
+        if not self.current_alias:
+            raise ModelNotFoundError("No model currently selected")
+        current_state = self._models.get(self.current_alias)
+        if not current_state:
+            raise ModelNotFoundError(f"model '{self.current_alias}' not found")
+        return current_state
+
+    @property
     def model_config(self) -> Optional[dict]:
         """Represents the config used when adding the model."""
-        current_state = self.current_alias and self._models.get(self.current_alias)
-        return current_state.config if current_state else None
+        return self._current_model_state.config
 
     @property
-    def model(self) -> Optional[Model]:
+    def model(self) -> Model:
         """Represents the current model."""
-        current_state = self.current_alias and self._models.get(self.current_alias)
-        return current_state.model if current_state else None
+        return self._current_model_state.model
 
     @property
-    def model_full_name(self) -> Optional[str]:
+    def model_full_name(self) -> str:
         """Represents the current model's full name."""
-        current_state = self.current_alias and self._models.get(self.current_alias)
-        return current_state.full_name if current_state else None
+        return self._current_model_state.full_name
 
     @property
-    def model_name(self) -> Optional[str]:
+    def model_name(self) -> str:
         """Represents the current model name."""
-        current_state = self.current_alias and self._models.get(self.current_alias)
-        return current_state.model_name if current_state else None
+        return self._current_model_state.model_name
 
     @property
     def cloud_name(self) -> Optional[str]:
         """Represents the current model's cloud name."""
-        current_state = self.current_alias and self._models.get(self.current_alias)
-        return current_state.cloud_name if current_state else None
+        return self._current_model_state.cloud_name
 
     @property
     def keep_model(self) -> bool:
@@ -572,8 +577,10 @@ class OpsTest:
         env = {**os.environ}
         if self.jujudata:
             env["JUJU_DATA"] = self.jujudata.path
-        if self.model_full_name:
+        try:
             env["JUJU_MODEL"] = self.model_full_name
+        except ModelNotFoundError:
+            pass
 
         if not isinstance(stdin, bytes) and stdin is not None:
             raise TypeError("'stdin' parameter must be a Optional[bytes] typed")
@@ -614,6 +621,7 @@ class OpsTest:
         after the tests are run in the module.
         """
         controller = self._controller
+        assert controller is not None  # needed for type checker
         controller_name = controller.controller_name
         if not cloud_name:
             # if not provided, try the default cloud name
@@ -639,7 +647,9 @@ class OpsTest:
         """
         returns True when the model_name exists in the model.
         """
-        all_models = await self._controller.list_models()
+        controller = self._controller
+        assert controller is not None  # needed for type checker
+        all_models = await controller.list_models()
         return model_name in all_models
 
     @staticmethod
@@ -815,7 +825,7 @@ class OpsTest:
             return
 
         if alias not in self.models:
-            raise ModelNotFoundError(f"{alias} not found")
+            raise ModelNotFoundError(f"model '{alias}' not found")
 
         with self.model_context(alias) as model:
             await self.log_model()
@@ -838,13 +848,13 @@ class OpsTest:
         # stop managing this model now
         log.info(f"Forgetting {alias}...")
         self._models.pop(alias)
-        if alias is self.current_alias:
+        if alias == self.current_alias:
             self._current_alias = None
 
     @staticmethod
     async def _reset(model: Model, allow_failure, timeout: Optional[Timeout] = None):
         # Forcibly destroy applications/machines in case any units are in error.
-        async def _destroy(entity_name: str, **kwargs):
+        async def _destroy(entity_name: str, **kwargs):  # type: ignore[return]
             for key, entity in getattr(model, entity_name).items():
                 try:
                     log.info(f"   Destroying {entity_name} {key}")
@@ -856,7 +866,6 @@ class OpsTest:
                     log.exception(e)
                     if not allow_failure:
                         raise
-            return None
 
         log.info(f"Resetting model {model.info.name}...")
         await _destroy("applications")
@@ -888,7 +897,9 @@ class OpsTest:
         for models in aliases:
             await self.forget_model(models)
 
-        await self._controller.disconnect()
+        controller = self._controller
+        assert controller is not None  # needed for type checker
+        await controller.disconnect()
 
     # maintain backwards compatibility (though this was a private method)
     _cleanup_model = _cleanup_models
@@ -1149,7 +1160,6 @@ class OpsTest:
         @param **context: Additional optional context as keyword args.
         @returns list of paths to rendered bundles.
         """
-        ...
         bundles_dst_dir = self.tmp_path / "bundles"
         bundles_dst_dir.mkdir(exist_ok=True)
         re_bundlefile = re.compile(r"\.(yaml|yml)(\.j2)?$")
@@ -1249,7 +1259,12 @@ class OpsTest:
 
         log.info(f"Building library {lib_path}")
         returncode, stdout, stderr = await self.run(
-            sys.executable, "setup.py", "sdist", "-d", libs_dst_dir, cwd=lib_path_abs
+            sys.executable,
+            "setup.py",
+            "sdist",
+            "-d",
+            str(libs_dst_dir),
+            cwd=lib_path_abs,
         )
         if returncode != 0:
             raise RuntimeError(

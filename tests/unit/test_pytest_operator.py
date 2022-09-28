@@ -85,7 +85,9 @@ class TestCharmhub:
         assert ch.exists
 
     def test_does_not_exist(self, info_api):
-        info_api.side_effect = HTTPError(url="", code=404, msg="", hdrs=None, fp=None)
+        info_api.side_effect = HTTPError(
+            url="", code=404, msg="", hdrs={}, fp=None  # type: ignore[arg-type]
+        )
         ch = plugin.Charmhub("etcd", "latest/edge")
         assert not ch.exists
 
@@ -145,7 +147,9 @@ class TestCharmstore:
         assert ch.exists
 
     def test_does_not_exist(self, info_api):
-        info_api.side_effect = HTTPError(url="", code=404, msg="", hdrs=None, fp=None)
+        info_api.side_effect = HTTPError(
+            url="", code=404, msg="", hdrs={}, fp=None  # type: ignore[arg-type]
+        )
         ch = plugin.CharmStore("cs:etcd", "edge")
         assert not ch.exists
 
@@ -251,10 +255,14 @@ async def test_plugin_fetch_resources(tmp_path_factory, resource_charm):
 async def test_async_render_bundles(tmp_path_factory):
     ops_test = plugin.OpsTest(Mock(**{"module.__name__": "test"}), tmp_path_factory)
     ops_test.jujudata = Mock()
+    ops_test._current_alias = "main"
+    mock_model = ops_test._models[ops_test._current_alias] = Mock()
+    mock_model.model_name = ops_test.default_model_name
+    mock_model.tmp_path = None
     ops_test.jujudata.path = ""
 
     with pytest.raises(TypeError):
-        await ops_test.async_render_bundles(1234)
+        await ops_test.async_render_bundles(1234)  # type: ignore[type-var]
 
     str_template = "a: {{ num }}"
     bundles = await ops_test.async_render_bundles(str_template, num=1)
@@ -294,12 +302,12 @@ async def test_crash_dump_mode(monkeypatch, tmp_path_factory):
     ops_test._init_keep_model = None
     ops_test._current_alias = "main"
     ops_test._models = {
-        ops_test.current_alias: plugin.ModelState(
+        ops_test._current_alias: plugin.ModelState(
             model, False, "test", "local", "model"
         )
     }
     ops_test.crash_dump_output = None
-    ops_test.log_model = AsyncMock()
+    patch(ops_test, "log_model", AsyncMock())
     ops_test._controller = AsyncMock()
 
     # 0 tests failed
@@ -313,7 +321,7 @@ async def test_crash_dump_mode(monkeypatch, tmp_path_factory):
     # 1 tests failed
     ops_test._current_alias = "main"
     ops_test._models = {
-        ops_test.current_alias: plugin.ModelState(
+        ops_test._current_alias: plugin.ModelState(
             model, False, "test", "local", "model"
         )
     }
@@ -343,6 +351,7 @@ async def test_create_crash_dump(monkeypatch, tmp_path_factory):
 
     patch = monkeypatch.setattr
     patch(plugin.OpsTest, "run", mock_run)
+    patch(plugin.OpsTest, "model_full_name", "admin:cloud/main")
     patch(plugin, "log", mock_log := MagicMock())
     ops_test = plugin.OpsTest(Mock(**{"module.__name__": "test"}), tmp_path_factory)
     await ops_test.create_crash_dump()
@@ -417,12 +426,29 @@ def setup_request(request, mock_juju):
     yield mock_request
 
 
+@pytest.mark.parametrize(
+    "attr", ["model", "model_name", "model_full_name", "model_config", "cloud_name"]
+)
+async def test_fixture_no_existing_model(
+    mock_juju, setup_request, tmp_path_factory, attr
+):
+    setup_request.config.option.model = "this-model"
+    ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
+    with pytest.raises(plugin.ModelNotFoundError, match="No model currently selected"):
+        _ = getattr(ops_test, attr)
+
+    ops_test._current_alias = "bogus"
+    with pytest.raises(plugin.ModelNotFoundError, match="model 'bogus' not found"):
+        _ = getattr(ops_test, attr)
+
+
 async def test_fixture_set_up_existing_model(
     mock_juju, setup_request, tmp_path_factory
 ):
     setup_request.config.option.model = "this-model"
     ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
-    assert ops_test.model is None
+    with pytest.raises(plugin.ModelNotFoundError):
+        _ = ops_test.model
 
     await ops_test._setup_model()
     mock_juju.model.connect.assert_called_with("this-controller:this-model")
@@ -462,7 +488,8 @@ async def test_fixture_set_up_automatic_model(
     model_name = "this-auto-generated-model-name"
     mock_default_model_name.return_value = model_name
     ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
-    assert ops_test.model is None
+    with pytest.raises(plugin.ModelNotFoundError):
+        _ = ops_test.model
 
     await ops_test._setup_model()
     mock_juju.controller.add_model.assert_called_with(
@@ -478,10 +505,26 @@ async def test_fixture_set_up_automatic_model(
     assert len(ops_test.models) == 1
 
 
+class MockConnectionClosed(ConnectionClosed):
+    """defines new type of ConnectionClosed exception.
+
+    websockets.ConnectionClosed takes different forms
+    in python 3.8, 3.9 and beyond and doesn't yield well to
+    static-analysis. This exception can be raised in its stead
+    by the tests but is still treated in the plugin as a
+    ConnectionClosed typed exception.
+    """
+
+    def __init__(self, *_args, **_kwds) -> None:
+        # intentionally don't construct the underlying exception
+        pass
+
+
 @pytest.mark.parametrize("model_name", [None, "alt-model"])
 @pytest.mark.parametrize("cloud_name", [None, "alt-cloud"])
 @pytest.mark.parametrize(
-    "block_exception", [None, asyncio.TimeoutError(), ConnectionClosed(1, "test")]
+    "block_exception",
+    [None, asyncio.TimeoutError(), MockConnectionClosed()],
 )
 @patch("pytest_operator.plugin.OpsTest.juju", autospec=True)
 async def test_fixture_create_remove_model(
