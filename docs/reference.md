@@ -103,15 +103,6 @@ subsequent refresh of the charm.
 ---
 
 
-## Warning Filters
-
-The asyncio library changed how the event loop is managed and the explicit parameter to
-a lot of functions is now deprecated, but python-libjuju hasn't been updated to address
-these (see [issue #461](https://github.com/juju/python-libjuju/issues/461)). This
-generates an extreme amount of noise on every test run and makes it hard to see the test
-results or reason for failure, so these warnings are automatically ignored.
-
-
 ## `OpsTest`
 
 ### Attributes

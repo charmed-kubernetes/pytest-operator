@@ -124,13 +124,6 @@ def pytest_load_initial_conftests(parser: Parser, args: List[str]) -> None:
 def pytest_configure(config: Config):
     config.addinivalue_line("markers", "abort_on_fail")
     config.addinivalue_line("markers", "skip_if_deployed")
-    # These need to be fixed in libjuju and just clutter things up for tests using this.
-    config.addinivalue_line(
-        "filterwarnings", "ignore:The loop argument:DeprecationWarning"
-    )
-    config.addinivalue_line(
-        "filterwarnings", r"ignore:'with \(yield from lock\)':DeprecationWarning"
-    )
 
 
 def pytest_runtest_setup(item):
