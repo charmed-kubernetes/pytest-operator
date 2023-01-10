@@ -154,7 +154,7 @@ Dataclass which represents a juju bundle.
 
 ### Methods
 
-#### `async def build_charm(self, charm_path)`
+#### `async def build_charm(self, charm_path, bases_index = None)`
 
 Builds a charm.
 
