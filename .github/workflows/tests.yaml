@@ -10,41 +10,25 @@ jobs:
     with:
       fail-on-error: "true"
 
-  unit:
-    name: Unit Tests & Lint
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python:
-          - "3.8"
-          - "3.9"
-          - "3.10"
-    steps:
-    - name: Check out code
-      uses: actions/checkout@v2
-    - name: Setup Python
-      uses: actions/setup-python@v2
-      with:
-        python-version: ${{ matrix.python }}
-    - name: Install Dependencies
-      run: |
-        pip install tox
-    - name: Run unit tests
-      run: tox -e unit
-    - name: Run lint
-      run: tox -e lint
+  lint-unit:
+    name: Lint Unit
+    uses: charmed-kubernetes/workflows/.github/workflows/lint-unit.yaml@main
+    with:
+      python: "['3.8', '3.9', '3.10', '3.11']"
+    needs:
+      - call-inclusive-naming-check
 
   integration-test:
     name: Integration test with LXD
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 40
     steps:
     - name: Check out code
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
     - name: Setup Python
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v4
       with:
-        python-version: 3.8
+        python-version: '3.10'
     - name: Setup operator test environment
       uses: charmed-kubernetes/actions-operator@main
     - name: Run integration tests
