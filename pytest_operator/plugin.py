@@ -907,7 +907,7 @@ class OpsTest:
         self.aborted = True
         pytest.fail(*args, **kwargs)
 
-    async def build_charm(self, charm_path) -> Path:
+    async def build_charm(self, charm_path, bases_index: int = None) -> Path:
         """Builds a single charm.
 
         This can handle charms using the older charms.reactive framework as
@@ -930,20 +930,20 @@ class OpsTest:
             # Handle newer, operator framework charms.
             all_groups = {g.gr_name for g in grp.getgrall()}
             users_groups = {grp.getgrgid(g).gr_name for g in os.getgroups()}
+            cmd = ["charmcraft", "pack"]
+            if bases_index:
+                cmd.append(f"--bases-index={bases_index}")
             if self.destructive_mode:
                 # host builder never requires lxd group
-                cmd = ["charmcraft", "pack", "--destructive-mode"]
-            elif "lxd" in users_groups:
-                # user already has lxd group active
-                cmd = ["charmcraft", "pack"]
-            else:
+                cmd.append("--destructive-mode")
+            elif "lxd" not in users_groups:
                 # building with lxd builder and user does't already have lxd group;
                 # make sure it's available and if so, try using `sg` to acquire it
                 assert "lxd" in all_groups, (
                     "Group 'lxd' required but not available; "
                     "ensure that lxd is available or use --destructive-mode"
                 )
-                cmd = ["sg", "lxd", "-c", "charmcraft pack"]
+                cmd = ["sg", "lxd", "-c", " ".join(cmd)]
 
         log.info(f"Building charm {charm_name}")
         start = timer()
