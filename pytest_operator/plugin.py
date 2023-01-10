@@ -1029,10 +1029,10 @@ class OpsTest:
                 resources[rsc_name].arch = "amd64"
         return resources
 
-    def arch_specific_resources(self, build_charm):
+    def arch_specific_resources(self, built_charm):
         return {
             name: rsc
-            for name, rsc in self.charm_file_resources(build_charm).items()
+            for name, rsc in self.charm_file_resources(built_charm).items()
             if rsc.arch
         }
 

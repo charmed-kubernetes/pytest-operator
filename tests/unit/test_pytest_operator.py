@@ -210,7 +210,7 @@ async def test_plugin_build_resources(tmp_path_factory):
     assert resources and resources == expected_resources
 
 
-def test_plugin_get_resources(tmp_path_factory, resource_charm):
+async def test_plugin_get_resources(tmp_path_factory, resource_charm):
     ops_test = plugin.OpsTest(Mock(**{"module.__name__": "test"}), tmp_path_factory)
     resources = ops_test.arch_specific_resources(resource_charm)
     assert resources.keys() == {"resource-file-arm64", "resource-file"}
