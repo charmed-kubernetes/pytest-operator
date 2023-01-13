@@ -1,3 +1,9 @@
+#!/usr/bin/env python3
+# Copyright 2021 Canonical Ltd.
+# See LICENSE file for licensing details.
+
+"""pytest fixtures for testing charms."""
+
 import asyncio
 import contextlib
 import dataclasses
@@ -20,6 +26,8 @@ from random import choices
 from string import ascii_lowercase, digits, hexdigits
 from timeit import default_timer as timer
 from typing import (
+    Any,
+    Dict,
     Generator,
     Iterable,
     List,
@@ -1091,58 +1099,120 @@ class OpsTest:
 
     async def build_bundle(
         self,
-        bundle: Optional[str] = None,
-        output_bundle: Optional[str] = None,
-        serial: bool = False,
-    ):
-        """Builds bundle using juju-bundle build."""
-        cmd = ["juju-bundle", "build"]
-        if bundle is not None:
-            cmd += ["--bundle", bundle]
-        if output_bundle is not None:
-            cmd += ["--output-bundle", output_bundle]
-        if self.destructive_mode:
-            cmd += ["--destructive-mode"]
-        if serial:
-            cmd += ["--serial"]
-        await self.run(*cmd, check=True)
+        bundle: Union[str, os.PathLike],
+        force: Optional[bool] = None,
+    ) -> Path:
+        """Build a single bundle using charmcraft pack.
+
+        :param bundle: (Union[str, os.PathLike])
+            File path to bundle.yaml. Can also specify project directory.
+        :param force: (Optional[bool])
+            Force packing even after discovering lint errors in the bundle.
+        :returns: (Path) File path of built bundle.
+        """
+        cmd = ["charmcraft", "pack"]
+        if force:
+            cmd.append("--force")
+
+        bundles_dst_dir = self.tmp_path.joinpath("bundles")
+        bundles_dst_dir.mkdir(exist_ok=True)
+        if (bundle_path := Path(bundle)).is_file():
+            bundle_abs_path = bundle_path.resolve().parent
+            bundle_name = yaml.safe_load(bundle_path.read_text())["name"]
+        else:
+            bundle_abs_path = bundle_path.resolve()
+            bundle_name = yaml.safe_load(
+                bundle_path.joinpath("bundle.yaml").read_text()
+            )["name"]
+
+        start = timer()
+        returncode, stdout, stderr = await self.run(
+            *cmd, check=True, cwd=bundle_abs_path
+        )
+        elapsed = timer() - start
+        if returncode == 0:
+            log.info(f"Built bundle {bundle_name} in {elapsed:.2f}s")
+            bundle_src = next(bundle_abs_path.glob(f"{bundle_name}*.zip"))
+            bundle_dst = bundles_dst_dir.joinpath(bundle_src.name)
+            bundle_src.rename(bundle_dst)
+            return bundle_src
+        else:
+            log.info(
+                f"Bundle build for {bundle_name} completed with errors (return "
+                f"code={returncode}) in {elapsed:.2f}s"
+            )
+            match = re.search(r"Full execution log: '([^']+)'", stderr)
+            if match:
+                try:
+                    stderr = Path(match.group(1)).read_text()
+                except FileNotFoundError:
+                    log.error(f"Failed to read full build log from {match.group(1)}")
+            raise RuntimeError(
+                f"Failed to build bundle {bundle_path}:\n{stderr}\n{stdout}"
+            )
+
+    async def build_bundles(
+        self, *bundle_paths: Union[str, os.PathLike], force: Optional[bool]
+    ) -> Dict[str, Path]:
+        """Build one or more bundles in parallel.
+
+        :param bundle_paths: (Union[str, os.PathLike])
+            File paths to bundle.yaml files. Can also specify project directory.
+        :param force: (Optional[bool])
+            Force packing even after discovering lint errors in the bundle.
+        :returns: (Dict[str, Path])
+            Mapping containing names and file paths of built bundles.
+        """
+        bundles = asyncio.gather(
+            *(self.build_bundle(bundle_path, force) for bundle_path in bundle_paths)
+        )
+        return {bundle.stem: bundle for bundle in bundles}
 
     async def deploy_bundle(
         self,
-        bundle: Optional[str] = None,
-        build: bool = True,
-        serial: bool = False,
-        extra_args: Iterable[str] = (),
-    ):
-        """Deploys bundle using juju-bundle deploy."""
-        cmd = ["juju-bundle", "deploy"]
-        if bundle is not None:
-            cmd += ["--bundle", bundle]
-        if build:
-            cmd += ["--build"]
-        if self.destructive_mode:
-            cmd += ["--destructive-mode"]
-        if serial:
-            cmd += ["--serial"]
+        bundle: Union[str, os.PathLike],
+        channel: Optional[str] = None,
+        overlays: Optional[Iterable[os.PathLike]] = None,
+        force: Optional[bool] = None,
+    ) -> None:
+        """Deploys bundle using juju deploy.
 
-        cmd += ["--"] + list(extra_args)
-
-        log.info(
-            "Deploying (and possibly building) bundle using juju-bundle command:"
-            f"'{' '.join(cmd)}'"
-        )
+        :param bundle: (Union[str, os.PathLike])
+            Bundle to deploy. Can either be path to
+            local bundle file or bundle from charmhub.
+        :param channel: (Optional[str])
+            Channel to use when deploying bundle from charmhub.
+            Do not use for local bundle files.
+        :param overlays: (Optional[Iterable[os.PathLike]])
+            Bundles to overlay on the primary bundle, applied in order.
+        :param force: (Optional[bool])
+            Allow bundle to be deployed which bypasses checks such as
+            support series or LXD profile allow list.
+        """
+        cmd = ["juju", "deploy", bundle]
+        if channel:
+            cmd.append(f"--channel={channel}")
+        if overlays:
+            [cmd.append(f"--overlay={overlay}") for overlay in overlays]
+        if force:
+            cmd.append(f"--force={str(force).lower()}")
+        log.info("Deploying bundle using juju command:" f"'{' '.join(cmd)}'")
         await self.run(*cmd, check=True)
 
-    async def async_render_bundles(self, *bundles: BundleOpt, **context) -> List[Path]:
-        """
-        Render a set of templated bundles using Jinja2.
+    async def async_render_bundles(
+        self, *bundles: BundleOpt, **context: Dict[str, Any]
+    ) -> List[Path]:
+        """Render a set of templated bundles using Jinja2.
 
         This can be used to populate built charm paths or config values.
-        @param *bundles: objects that are YAML content, pathlike, or charmhub reference
-        @param **context: Additional optional context as keyword args.
-        @returns list of paths to rendered bundles.
+
+        :param bundles: (BundleOpt)
+            Objects that are YAML content, pathlike, or charmhub reference.
+        :param context: (Dict[str, Any])
+            Additional optional context as keyword arguments.
+        :returns: (Iterable[Path])
+            Iterable containing file paths to rendered bundles.
         """
-        ...
         bundles_dst_dir = self.tmp_path / "bundles"
         bundles_dst_dir.mkdir(exist_ok=True)
         re_bundlefile = re.compile(r"\.(yaml|yml)(\.j2)?$")
@@ -1171,16 +1241,24 @@ class OpsTest:
             to_render.append(content)
         return self.render_bundles(*to_render, **context)
 
-    def render_bundles(self, *bundles, context=None, **kwcontext) -> List[Path]:
+    def render_bundles(
+        self,
+        *bundles: Union[str, os.PathLike],
+        context: Optional[Dict[str, Any]] = None,
+        **kwcontext: Dict[str, Any],
+    ) -> List[Path]:
         """Render one or more templated bundles using Jinja2.
 
         This can be used to populate built charm paths or config values.
 
-        :param *bundles (str or Path): One or more bundle Paths or YAML contents.
-        :param context (dict): Optional context mapping.
-        :param **kwcontext: Additional optional context as keyword args.
-
-        Returns a list of Paths for the rendered bundles.
+        :param bundles: (Union[str, os.PathLike])
+            One or more bundle Paths or YAML contents.
+        :param context: (Optional[Dict[str, Any]])
+            Optional context mapping.
+        :param kwcontext: (Dict[str, Any])
+            Additional optional context as keyword args.
+        :returns: (Iterable[Path])
+            Iterable containing file paths for the rendered bundles.
         """
         # Jinja2 does support async, but rendering bundles should be relatively quick.
         return [
@@ -1188,23 +1266,30 @@ class OpsTest:
             for bundle in bundles
         ]
 
-    def render_bundle(self, bundle, context=None, **kwcontext) -> Path:
+    def render_bundle(
+        self,
+        bundle: Union[str, os.PathLike],
+        context: Optional[Dict[str, Any]] = None,
+        **kwcontext: Dict[str, Any],
+    ) -> Path:
         """Render a templated bundle using Jinja2.
 
         This can be used to populate built charm paths or config values.
 
-        :param bundle (str or Path): Path to bundle file or YAML content.
-        :param context (dict): Optional context mapping.
-        :param **kwcontext: Additional optional context as keyword args.
-
-        Returns the Path for the rendered bundle.
+        :param bundle: (Union[str, os.PathLike])
+            Path to bundle file or YAML content.
+        :param context: (Optional[Dict[str, Any]])
+            Optional context mapping.
+        :param kwcontext: (Dict[str, Any])
+            Additional optional context as keyword args.
+        :returns: (Path) File path to the rendered bundle.
         """
         bundles_dst_dir = self.tmp_path / "bundles"
         bundles_dst_dir.mkdir(exist_ok=True)
         if context is None:
             context = {}
         context.update(kwcontext)
-        if re.search(r".yaml(.j2)?$", str(bundle)):
+        if re.search(r"[.]yaml([.]j2|[.]tmpl)?$", str(bundle)):
             bundle_path = Path(bundle)
             bundle_text = bundle_path.read_text()
             if bundle_path.suffix == ".j2":
