@@ -1189,7 +1189,7 @@ class OpsTest:
             Allow bundle to be deployed which bypasses checks such as
             support series or LXD profile allow list.
         """
-        cmd = ["juju", "deploy", bundle]
+        cmd = ["juju", "deploy", str(bundle)]
         if channel:
             cmd.append(f"--channel={channel}")
         if overlays:
@@ -1289,10 +1289,10 @@ class OpsTest:
         if context is None:
             context = {}
         context.update(kwcontext)
-        if re.search(r"[.]yaml([.]j2|[.]tmpl)?$", str(bundle)):
+        if re.search(r"([.]yaml)?([.]j2|[.]tmpl)?$", str(bundle)):
             bundle_path = Path(bundle)
             bundle_text = bundle_path.read_text()
-            if bundle_path.suffix == ".j2":
+            if bundle_path.suffix == ".j2" or bundle_path.suffix == ".tmpl":
                 bundle_name = bundle_path.stem
             else:
                 bundle_name = bundle_path.name
