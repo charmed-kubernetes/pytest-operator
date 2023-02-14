@@ -137,11 +137,25 @@ def pytest_runtest_setup(item):
 
 @pytest.fixture(scope="session")
 def tmp_path_factory(request):
-    # Override temp path factory to create temp dirs under Tox env so that
-    # confined snaps (e.g., charmcraft) can access them.
+    """Override temp path factory to create temp dirs so
+    strictly confined snaps (e.g., juju, charmcraft) can access them.
+    if   TMPDIR       is in os.environ, use this as the basetemp
+    elif TOX_ENV_DIR  is in os.environ, create a tmp/pytest/ directly beneath it
+    else use whatever pytest will naturally provide (may not handle strict confined snaps)
+    """
+   
+    given_basetemp, basetemp = None, None
+    tmpdir, toxdir = os.environ.get("TMPDIR"), os.environ.get("TOX_ENV_DIR")
+
+    if tmpdir:
+        basetemp = Path(tmpdir)
+    elif toxdir:
+        given_basetemp = Path(toxdir) / "tmp" / "pytest"
+
     return pytest.TempPathFactory(
-        given_basetemp=Path(os.environ["TOX_ENV_DIR"]) / "tmp" / "pytest",
+        given_basetemp=given_basetemp,
         trace=request.config.trace.get("tmpdir"),
+        basetemp=basetemp,
         _ispytest=True,
     )
 
