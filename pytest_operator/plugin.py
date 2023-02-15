@@ -141,9 +141,9 @@ def tmp_path_factory(request):
     strictly confined snaps (e.g., juju, charmcraft) can access them.
     if   TMPDIR       is in os.environ, use this as the basetemp
     elif TOX_ENV_DIR  is in os.environ, create a tmp/pytest/ directly beneath it
-    else use whatever pytest will naturally provide (may not handle strict confined snaps)
+    else default TempPathFactory (may not handle strict confined snaps)
     """
-   
+
     given_basetemp, basetemp = None, None
     tmpdir, toxdir = os.environ.get("TMPDIR"), os.environ.get("TOX_ENV_DIR")
 
