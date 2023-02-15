@@ -15,12 +15,13 @@ log = logging.getLogger(__name__)
 
 ENV = {_: os.environ.get(_) for _ in ["HOME", "TOX_ENV_DIR"]}
 
+
 def test_tmp_path_with_tox(pytester):
     pytester.makepyfile(
         f"""
         import os
         from pathlib import Path
-        
+
         os.environ.update(**{ENV})
         async def test_with_tox(ops_test):
             expected_base = Path("{ENV["TOX_ENV_DIR"]}") / "tmp" / "pytest"
@@ -31,12 +32,13 @@ def test_tmp_path_with_tox(pytester):
     result = pytester.runpytest()
     result.assert_outcomes(passed=1)
 
+
 def test_tmp_path_without_tox(request, pytester):
     pytester.makepyfile(
-        f"""
+        """
         import os
         from pathlib import Path
-        
+
         os.environ.update(**{ENV})
         async def test_without_tox(request, ops_test):
             unexpected_base = Path("{ENV["TOX_ENV_DIR"]}") / "tmp" / "pytest"
@@ -48,7 +50,7 @@ def test_tmp_path_without_tox(request, pytester):
             assert expected_base == Path(common)
         """
     )
-    result = pytester.runpytest(f"--basetemp=/tmp/pytest")
+    result = pytester.runpytest("--basetemp=/tmp/pytest")
     result.assert_outcomes(passed=1)
 
 
