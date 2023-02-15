@@ -16,6 +16,7 @@ log = logging.getLogger(__name__)
 ENV = {_: os.environ.get(_) for _ in ["HOME", "TOX_ENV_DIR"]}
 
 
+@patch.object(plugin, "check_deps", Mock())
 def test_tmp_path_with_tox(pytester):
     pytester.makepyfile(
         f"""
@@ -33,9 +34,10 @@ def test_tmp_path_with_tox(pytester):
     result.assert_outcomes(passed=1)
 
 
+@patch.object(plugin, "check_deps", Mock())
 def test_tmp_path_without_tox(request, pytester):
     pytester.makepyfile(
-        """
+        f"""
         import os
         from pathlib import Path
 
