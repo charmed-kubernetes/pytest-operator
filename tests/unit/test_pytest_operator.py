@@ -17,6 +17,8 @@ ENV = {_: os.environ.get(_) for _ in ["HOME", "TOX_ENV_DIR"]}
 
 
 @patch.object(plugin, "check_deps", Mock())
+@patch.object(plugin.OpsTest, "_setup_model", AsyncMock())
+@patch.object(plugin.OpsTest, "_cleanup_models", AsyncMock())
 def test_tmp_path_with_tox(pytester):
     pytester.makepyfile(
         f"""
@@ -35,6 +37,8 @@ def test_tmp_path_with_tox(pytester):
 
 
 @patch.object(plugin, "check_deps", Mock())
+@patch.object(plugin.OpsTest, "_setup_model", AsyncMock())
+@patch.object(plugin.OpsTest, "_cleanup_models", AsyncMock())
 def test_tmp_path_without_tox(request, pytester):
     pytester.makepyfile(
         f"""
