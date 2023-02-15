@@ -57,11 +57,22 @@ This is the primary interface for the plugin, and provides an instance of the [`
 class](#OpsTest).
 
 
-### `tmp_path_factory`
+### `basetemp`
 
-This overrides the default `tmp_path_factory` fixture from pytest to relocate any
-temporary directories to under `$TOX_ENV_DIR/tmp/pytest`. This is done because strictly
-confined snaps, like `charmcraft`, can't access the global `/tmp`.
+Some snap tools are dropping their `classic` snap support, and will
+lose the ability to write anywhere on the filesystem. Tests should
+be run to confirm they're located within the user's `HOME` directory
+so strictly confined snaps can write to temporary directories. 
+
+Temp Directories can be moved with the following options:
+
+If `basetemp` is provided as pytest configuration
+   * pytest will create a directory here for temporary files
+If `basetemp` is not provided as pytest configuration
+   * the plugin will look to `TOX_ENV_DIR` environment variable
+   * if that env var is set, `${tox_env_dir}/tmp/pytest` will be used
+If `basetemp` and `TOX_ENV_DIR` are both unset
+   * pytest is responsible for creating a temporary directory
 
 
 ### `event_loop`
