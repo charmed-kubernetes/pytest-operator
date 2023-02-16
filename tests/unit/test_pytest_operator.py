@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from unittest.mock import Mock, AsyncMock, ANY, patch, call, MagicMock, PropertyMock
 from urllib.error import HTTPError
 from pathlib import Path
@@ -11,6 +12,52 @@ import pytest
 from pytest_operator import plugin
 
 log = logging.getLogger(__name__)
+
+ENV = {_: os.environ.get(_) for _ in ["HOME", "TOX_ENV_DIR"]}
+
+
+@patch.object(plugin, "check_deps", Mock())
+@patch.object(plugin.OpsTest, "_setup_model", AsyncMock())
+@patch.object(plugin.OpsTest, "_cleanup_models", AsyncMock())
+def test_tmp_path_with_tox(pytester):
+    pytester.makepyfile(
+        f"""
+        import os
+        from pathlib import Path
+
+        os.environ.update(**{ENV})
+        async def test_with_tox(ops_test):
+            expected_base = Path("{ENV["TOX_ENV_DIR"]}") / "tmp" / "pytest"
+            common = os.path.commonpath([ops_test.tmp_path, expected_base])
+            assert expected_base == Path(common)
+        """
+    )
+    result = pytester.runpytest()
+    result.assert_outcomes(passed=1)
+
+
+@patch.object(plugin, "check_deps", Mock())
+@patch.object(plugin.OpsTest, "_setup_model", AsyncMock())
+@patch.object(plugin.OpsTest, "_cleanup_models", AsyncMock())
+def test_tmp_path_without_tox(request, pytester):
+    pytester.makepyfile(
+        f"""
+        import os
+        from pathlib import Path
+
+        os.environ.update(**{ENV})
+        async def test_without_tox(request, ops_test):
+            unexpected_base = Path("{ENV["TOX_ENV_DIR"]}") / "tmp" / "pytest"
+            common = os.path.commonpath([ops_test.tmp_path, unexpected_base])
+            assert unexpected_base != Path(common)
+
+            expected_base = Path("/tmp/pytest")
+            common = os.path.commonpath([ops_test.tmp_path, expected_base])
+            assert expected_base == Path(common)
+        """
+    )
+    result = pytester.runpytest("--basetemp=/tmp/pytest")
+    result.assert_outcomes(passed=1)
 
 
 async def test_destructive_mode(monkeypatch, tmp_path_factory):
@@ -283,9 +330,8 @@ async def test_crash_dump_mode(monkeypatch, tmp_path_factory):
     """Test running juju-crashdump in OpsTest.cleanup."""
     patch = monkeypatch.setattr
     patch(plugin.OpsTest, "run", mock_run := AsyncMock(return_value=(0, "", "")))
-    ops_test = plugin.OpsTest(
-        mock_request := Mock(**{"module.__name__": "test"}), tmp_path_factory
-    )
+    mock_request = Mock(**{"module.__name__": "test"})
+    ops_test = plugin.OpsTest(mock_request, tmp_path_factory)
     ops_test.crash_dump = True
     model = MagicMock()
     model.machines.values.return_value = []

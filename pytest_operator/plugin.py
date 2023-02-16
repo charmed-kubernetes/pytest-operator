@@ -125,6 +125,11 @@ def pytest_configure(config: Config):
     config.addinivalue_line("markers", "abort_on_fail")
     config.addinivalue_line("markers", "skip_if_deployed")
 
+    if config.option.basetemp is None:
+        tox_dir = os.environ.get("TOX_ENV_DIR")
+        if tox_dir:
+            config.option.basetemp = Path(tox_dir) / "tmp/pytest"
+
 
 def pytest_runtest_setup(item):
     if (
@@ -133,17 +138,6 @@ def pytest_runtest_setup(item):
         and item.config.getoption("--model") is not None
     ):
         pytest.skip("Skipping deployment because --no-deploy was specified.")
-
-
-@pytest.fixture(scope="session")
-def tmp_path_factory(request):
-    # Override temp path factory to create temp dirs under Tox env so that
-    # confined snaps (e.g., charmcraft) can access them.
-    return pytest.TempPathFactory(
-        given_basetemp=Path(os.environ["TOX_ENV_DIR"]) / "tmp" / "pytest",
-        trace=request.config.trace.get("tmpdir"),
-        _ispytest=True,
-    )
 
 
 def check_deps(*deps):

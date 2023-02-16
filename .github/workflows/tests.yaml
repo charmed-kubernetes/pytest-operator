@@ -18,10 +18,13 @@ jobs:
     needs:
       - call-inclusive-naming-check
 
-  integration-test:
-    name: Integration test with LXD
+  integration-test-3-0:
+    name: Integration test with juju
     runs-on: ubuntu-22.04
     timeout-minutes: 40
+    strategy:
+      matrix:
+        juju: ['2.9', '3.0']
     steps:
     - name: Check out code
       uses: actions/checkout@v3
@@ -31,5 +34,28 @@ jobs:
         python-version: '3.10'
     - name: Setup operator test environment
       uses: charmed-kubernetes/actions-operator@main
+      with:
+        juju-channel: ${{ matrix.juju }}/stable
+    - name: Run integration tests
+      run: tox -e integration-3.0
+
+  integration-test:
+    name: Integration test with juju
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    strategy:
+      matrix:
+        juju: ['3.1']
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v3
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    - name: Setup operator test environment
+      uses: charmed-kubernetes/actions-operator@main
+      with:
+        juju-channel: ${{ matrix.juju }}/stable
     - name: Run integration tests
       run: tox -e integration
