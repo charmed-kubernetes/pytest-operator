@@ -918,7 +918,7 @@ class OpsTest:
             all_groups = {g.gr_name for g in grp.getgrall()}
             users_groups = {grp.getgrgid(g).gr_name for g in os.getgroups()}
             cmd = ["charmcraft", "pack"]
-            if bases_index:
+            if bases_index is not None:
                 cmd.append(f"--bases-index={bases_index}")
             if self.destructive_mode:
                 # host builder never requires lxd group
