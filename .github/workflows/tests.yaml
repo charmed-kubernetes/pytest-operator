@@ -28,16 +28,32 @@ jobs:
     steps:
     - name: Check out code
       uses: actions/checkout@v3
+
     - name: Setup Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
+
     - name: Setup operator test environment
       uses: charmed-kubernetes/actions-operator@main
       with:
         juju-channel: ${{ matrix.juju }}/stable
+
     - name: Run integration tests
       run: tox -e integration-3.0
+
+    - name: Collect Charmcraft Logs
+      if: ${{ failure() }}
+      run: |
+        mkdir -p tmp/
+        mv $HOME/.local/state/charmcraft/log/* tmp/ | true
+
+    - name: Upload debug artifacts
+      if: ${{ failure() }}
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-run-artifacts
+        path: tmp
 
   integration-test:
     name: Integration test with juju
@@ -49,13 +65,29 @@ jobs:
     steps:
     - name: Check out code
       uses: actions/checkout@v3
+
     - name: Setup Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
+
     - name: Setup operator test environment
       uses: charmed-kubernetes/actions-operator@main
       with:
         juju-channel: ${{ matrix.juju }}/stable
+
     - name: Run integration tests
       run: tox -e integration
+
+    - name: Collect Charmcraft Logs
+      if: ${{ failure() }}
+      run: |
+        mkdir -p tmp/
+        mv $HOME/.local/state/charmcraft/log/* tmp/ | true
+
+    - name: Upload debug artifacts
+      if: ${{ failure() }}
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-run-artifacts
+        path: tmp
