@@ -782,7 +782,7 @@ class OpsTest:
 
     async def forget_model(
         self,
-        alias: str,
+        alias: Optional[str] = None,
         timeout: Optional[Timeout] = None,
         allow_failure: bool = True,
     ):
@@ -792,7 +792,7 @@ class OpsTest:
         If the model is not marked as kept, ops_test will destroy the model.
         If timeout is None don't wait on the model to be completely destroyed
 
-        @param                   str alias: alias of the model
+        @param                   str alias: alias of the model (default: current alias)
         @param Optional[float,int] timeout: how long to wait for it to be removed,
                                             if None, don't block waiting for success
         @param          bool allow_failure: if False, failures raise an exception
@@ -800,6 +800,9 @@ class OpsTest:
         if not self._controller:
             log.error("No access to controller, skipping...")
             return
+
+        if not alias:
+            alias = self.current_alias
 
         if alias not in self.models:
             raise ModelNotFoundError(f"{alias} not found")
