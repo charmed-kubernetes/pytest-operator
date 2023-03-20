@@ -23,6 +23,7 @@ from typing import (
     Generator,
     Iterable,
     List,
+    Literal,
     MutableMapping,
     Mapping,
     Optional,
@@ -897,7 +898,14 @@ class OpsTest:
         self.aborted = True
         pytest.fail(*args, **kwargs)
 
-    async def build_charm(self, charm_path, bases_index: int = None) -> Path:
+    async def build_charm(
+        self,
+        charm_path,
+        bases_index: int = None,
+        verbosity: Optional[
+            Literal["quiet", "brief", "verbose", "debug", "trace"]
+        ] = None,
+    ) -> Path:
         """Builds a single charm.
 
         This can handle charms using the older charms.reactive framework as
@@ -923,6 +931,8 @@ class OpsTest:
             cmd = ["charmcraft", "pack"]
             if bases_index is not None:
                 cmd.append(f"--bases-index={bases_index}")
+            if verbosity:
+                cmd.append(f"--verbosity={verbosity}")
             if self.destructive_mode:
                 # host builder never requires lxd group
                 cmd.append("--destructive-mode")
