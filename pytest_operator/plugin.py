@@ -89,20 +89,20 @@ def pytest_addoption(parser: Parser):
     parser.addoption(
         "--no-crash-dump",
         action="store_true",
-        help="(Deprecated - use --crash-dump=never instead.  Overrides anything specified in"
-             "--crash-dump)\n"
-            "Disable automatic runs of juju-crashdump after failed tests, "
-            "juju-crashdump runs by default.",
+        help="(Deprecated - use --crash-dump=never instead.  Overrides anything"
+             " specified in --crash-dump)\n"
+        "Disable automatic runs of juju-crashdump after failed tests, "
+        "juju-crashdump runs by default.",
     )
     parser.addoption(
         "--crash-dump",
         action="store",
         default="legacy",
         help="Sets whether to output a juju-crashdump after tests.  Options are:\n"
-            "* always: dumps after all tests\n"
-            "* on-failure: dumps after failed tests\n"
-            "* legacy: (DEFAULT) dumps after a failed test if --keep-models is False\n"
-            "* never: never dumps"
+        "* always: dumps after all tests\n"
+        "* on-failure: dumps after failed tests\n"
+        "* legacy: (DEFAULT) dumps after a failed test if --keep-models is False\n"
+        "* never: never dumps",
     )
     parser.addoption(
         "--crash-dump-output",
@@ -242,21 +242,21 @@ def handle_file_delete_error(function, path, execinfo):
 def validate_crash_dump(crash_dump: str, no_crash_dump: bool):
     """Validates the crash-dump inputs, raising if they are not accepted values."""
     if no_crash_dump:
-        log.warning("Got flag --no-crash-dump.  Ignoring value of flag --crash-dump and "
-                    "setting --crash-dump=never")
+        log.warning(
+            "Got flag --no-crash-dump.  Ignoring value of flag --crash-dump and "
+            "setting --crash-dump=never"
+        )
         crash_dump = "never"
 
-    accepted_crash_dump = [
-        "always",
-        "legacy",
-        "on-failure",
-        "never"
-    ]
+    accepted_crash_dump = ["always", "legacy", "on-failure", "never"]
     if crash_dump not in accepted_crash_dump:
-        raise ValueError(f"Got invalid --crash-dump={crash_dump}, must be one of"
-                         f" {accepted_crash_dump}")
+        raise ValueError(
+            f"Got invalid --crash-dump={crash_dump}, must be one of"
+            f" {accepted_crash_dump}"
+        )
 
     return crash_dump
+
 
 class FileResource:
     """Represents a File based Resource."""
@@ -1420,15 +1420,12 @@ class OpsTest:
 
     def is_crash_dump_enabled(self) -> bool:
         """Returns whether Juju crash dump is enabled given the current settings."""
-        if self.crash_dump == 'always':
+        if self.crash_dump == "always":
+            return True
+        elif self.crash_dump == "on-failure" and self.request.session.testsfailed > 0:
             return True
         elif (
-            self.crash_dump == 'on-failure'
-            and self.request.session.testsfailed > 0
-        ):
-            return True
-        elif (
-            self.crash_dump == 'legacy'
+            self.crash_dump == "legacy"
             and self.request.session.testsfailed > 0
             and self.keep_model is False
         ):

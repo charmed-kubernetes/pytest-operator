@@ -325,6 +325,7 @@ async def test_async_render_bundles(tmp_path_factory):
         bundles = await ops_test.async_render_bundles(download_bundle, num=1)
     assert bundles[0].read_text() == "a: 1"
 
+
 @pytest.mark.parametrize(
     "crash_dump, no_crash_dump, n_testsfailed, keep_models, expected_crashdump",
     [
@@ -343,7 +344,8 @@ async def test_async_render_bundles(tmp_path_factory):
         ("on-failure", False, 0, False, False),
         ("on-failure", False, 1, True, True),
         ("on-failure", False, 1, False, True),
-        # crash_dump == legacy && no_crash_dump == False -> dump if failure and keep_model==False
+        # crash_dump == legacy && no_crash_dump == False ->
+        #   dump if failure and keep_model==False
         ("legacy", False, 0, True, False),
         ("legacy", False, 0, False, False),
         ("legacy", False, 1, True, False),
@@ -353,9 +355,17 @@ async def test_async_render_bundles(tmp_path_factory):
         ("never", False, 0, False, False),
         ("never", False, 1, True, False),
         ("never", False, 1, False, False),
-    ]
+    ],
 )
-async def test_crash_dump_mode(crash_dump, no_crash_dump, n_testsfailed, keep_models, expected_crashdump, monkeypatch, tmp_path_factory):
+async def test_crash_dump_mode(
+    crash_dump,
+    no_crash_dump,
+    n_testsfailed,
+    keep_models,
+    expected_crashdump,
+    monkeypatch,
+    tmp_path_factory,
+):
     """Test running juju-crashdump in OpsTest.cleanup."""
     patch = monkeypatch.setattr
     patch(plugin.OpsTest, "run", mock_run := AsyncMock(return_value=(0, "", "")))
@@ -400,7 +410,9 @@ async def test_crash_dump_mode(crash_dump, no_crash_dump, n_testsfailed, keep_mo
 def test_crash_dump_mode_invalid_input(monkeypatch, tmp_path_factory):
     """Test running juju-crashdump in OpsTest.cleanup."""
     patch = monkeypatch.setattr
-    patch(plugin.OpsTest, "run", mock_run := AsyncMock(return_value=(0, "", "")))
+    patch(plugin.OpsTest, "run", AsyncMock(
+        return_value=(0, "", ""))
+    )
     mock_request = Mock(**{"module.__name__": "test"})
     mock_request.config.option.crash_dump = "not-a-real-option"
     mock_request.config.option.no_crash_dump = False
