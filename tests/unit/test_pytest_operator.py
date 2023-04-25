@@ -410,9 +410,7 @@ async def test_crash_dump_mode(
 def test_crash_dump_mode_invalid_input(monkeypatch, tmp_path_factory):
     """Test running juju-crashdump in OpsTest.cleanup."""
     patch = monkeypatch.setattr
-    patch(plugin.OpsTest, "run", AsyncMock(
-        return_value=(0, "", ""))
-    )
+    patch(plugin.OpsTest, "run", AsyncMock(return_value=(0, "", "")))
     mock_request = Mock(**{"module.__name__": "test"})
     mock_request.config.option.crash_dump = "not-a-real-option"
     mock_request.config.option.no_crash_dump = False

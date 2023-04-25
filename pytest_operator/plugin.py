@@ -90,7 +90,7 @@ def pytest_addoption(parser: Parser):
         "--no-crash-dump",
         action="store_true",
         help="(Deprecated - use --crash-dump=never instead.  Overrides anything"
-             " specified in --crash-dump)\n"
+        " specified in --crash-dump)\n"
         "Disable automatic runs of juju-crashdump after failed tests, "
         "juju-crashdump runs by default.",
     )
