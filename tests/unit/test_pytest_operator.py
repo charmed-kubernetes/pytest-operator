@@ -326,18 +326,58 @@ async def test_async_render_bundles(tmp_path_factory):
     assert bundles[0].read_text() == "a: 1"
 
 
-async def test_crash_dump_mode(monkeypatch, tmp_path_factory):
+@pytest.mark.parametrize(
+    "crash_dump, no_crash_dump, n_testsfailed, keep_models, expected_crashdump",
+    [
+        # crash_dump == always && no_crash_dump == False -> always dump
+        ("always", False, 0, True, True),
+        ("always", False, 0, False, True),
+        ("always", False, 1, True, True),
+        ("always", False, 1, False, True),
+        # crash_dump == always && no_crash_dump == True -> never dump
+        ("always", True, 0, True, False),
+        ("always", True, 0, False, False),
+        ("always", True, 1, True, False),
+        ("always", True, 1, False, False),
+        # crash_dump == on-failure && no_crash_dump == False -> dump on failures
+        ("on-failure", False, 0, True, False),
+        ("on-failure", False, 0, False, False),
+        ("on-failure", False, 1, True, True),
+        ("on-failure", False, 1, False, True),
+        # crash_dump == legacy && no_crash_dump == False ->
+        #   dump if failure and keep_model==False
+        ("legacy", False, 0, True, False),
+        ("legacy", False, 0, False, False),
+        ("legacy", False, 1, True, False),
+        ("legacy", False, 1, False, True),
+        # crash_dump == never -> never dump
+        ("never", False, 0, True, False),
+        ("never", False, 0, False, False),
+        ("never", False, 1, True, False),
+        ("never", False, 1, False, False),
+    ],
+)
+async def test_crash_dump_mode(
+    crash_dump,
+    no_crash_dump,
+    n_testsfailed,
+    keep_models,
+    expected_crashdump,
+    monkeypatch,
+    tmp_path_factory,
+):
     """Test running juju-crashdump in OpsTest.cleanup."""
     patch = monkeypatch.setattr
     patch(plugin.OpsTest, "run", mock_run := AsyncMock(return_value=(0, "", "")))
     mock_request = Mock(**{"module.__name__": "test"})
+    mock_request.config.option.crash_dump = crash_dump
+    mock_request.config.option.no_crash_dump = no_crash_dump
+    mock_request.config.option.keep_models = keep_models
     ops_test = plugin.OpsTest(mock_request, tmp_path_factory)
-    ops_test.crash_dump = True
     model = MagicMock()
     model.machines.values.return_value = []
     model.disconnect = AsyncMock()
     model.block_until = AsyncMock()
-    ops_test._init_keep_model = None
     ops_test._current_alias = "main"
     ops_test._models = {
         ops_test.current_alias: plugin.ModelState(
@@ -348,36 +388,36 @@ async def test_crash_dump_mode(monkeypatch, tmp_path_factory):
     ops_test.log_model = AsyncMock()
     ops_test._controller = AsyncMock()
 
-    # 0 tests failed
-    mock_request.session.testsfailed = 0
+    mock_request.session.testsfailed = n_testsfailed
 
     await ops_test._cleanup_model()
 
-    mock_run.assert_not_called()
-    mock_run.reset_mock()
-
-    # 1 tests failed
-    ops_test._current_alias = "main"
-    ops_test._models = {
-        ops_test.current_alias: plugin.ModelState(
-            model, False, "test", "local", "model"
+    if expected_crashdump:
+        mock_run.assert_called_once_with(
+            "juju-crashdump",
+            "-s",
+            "-m",
+            "test:model",
+            "-a",
+            "debug-layer",
+            "-a",
+            "config",
         )
-    }
-    mock_request.session.testsfailed = 1
+    else:
+        mock_run.assert_not_called()
 
-    await ops_test._cleanup_model()
 
-    mock_run.assert_called_once_with(
-        "juju-crashdump",
-        "-s",
-        "-m",
-        "test:model",
-        "-a",
-        "debug-layer",
-        "-a",
-        "config",
-    )
-    mock_run.reset_mock()
+def test_crash_dump_mode_invalid_input(monkeypatch, tmp_path_factory):
+    """Test running juju-crashdump in OpsTest.cleanup."""
+    patch = monkeypatch.setattr
+    patch(plugin.OpsTest, "run", AsyncMock(return_value=(0, "", "")))
+    mock_request = Mock(**{"module.__name__": "test"})
+    mock_request.config.option.crash_dump = "not-a-real-option"
+    mock_request.config.option.no_crash_dump = False
+    mock_request.config.option.keep_models = False
+
+    with pytest.raises(ValueError):
+        plugin.OpsTest(mock_request, tmp_path_factory)
 
 
 async def test_create_crash_dump(monkeypatch, tmp_path_factory):

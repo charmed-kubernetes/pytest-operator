@@ -89,8 +89,20 @@ def pytest_addoption(parser: Parser):
     parser.addoption(
         "--no-crash-dump",
         action="store_true",
-        help="Disabled automatic runs of juju-crashdump after failed tests, "
+        help="(Deprecated - use '--crash-dump=never' instead.  Overrides anything"
+        " specified in '--crash-dump')\n"
+        "Disable automatic runs of juju-crashdump after failed tests, "
         "juju-crashdump runs by default.",
+    )
+    parser.addoption(
+        "--crash-dump",
+        action="store",
+        default="legacy",
+        help="Sets whether to output a juju-crashdump after tests.  Options are:\n"
+        "* always: dumps after all tests\n"
+        "* on-failure: dumps after failed tests\n"
+        "* legacy: (DEFAULT) dumps after a failed test if '--keep-models' is False\n"
+        "* never: never dumps",
     )
     parser.addoption(
         "--crash-dump-output",
@@ -225,6 +237,25 @@ async def ops_test(request, tmp_path_factory):
 
 def handle_file_delete_error(function, path, execinfo):
     log.warning(f"Failed to delete '{path}' due to {execinfo[1]}")
+
+
+def validate_crash_dump(crash_dump: str, no_crash_dump: bool):
+    """Validates the crash-dump inputs, raising if they are not accepted values."""
+    if no_crash_dump:
+        log.warning(
+            "Got flag --no-crash-dump.  Ignoring value of flag --crash-dump and "
+            "setting --crash-dump=never"
+        )
+        crash_dump = "never"
+
+    accepted_crash_dump = ["always", "legacy", "on-failure", "never"]
+    if crash_dump not in accepted_crash_dump:
+        raise ValueError(
+            f"Got invalid --crash-dump={crash_dump}, must be one of"
+            f" {accepted_crash_dump}"
+        )
+
+    return crash_dump
 
 
 class FileResource:
@@ -430,7 +461,10 @@ class OpsTest:
         self._init_model_config = request.config.option.model_config
 
         # Flag for enabling the juju-crashdump
-        self.crash_dump = not request.config.option.no_crash_dump
+        self.crash_dump = validate_crash_dump(
+            crash_dump=request.config.option.crash_dump,
+            no_crash_dump=request.config.option.no_crash_dump,
+        )
         self.crash_dump_output = request.config.option.crash_dump_output
 
         # These will be set by _setup_model
@@ -812,13 +846,7 @@ class OpsTest:
             await self.log_model()
             model_name = model.info.name
 
-            # NOTE (rgildein): Create juju-crashdump only if any tests failed,
-            # `juju-crashdump` flag is enabled and OpsTest.keep_model == False
-            if (
-                self.request.session.testsfailed > 0
-                and self.crash_dump
-                and self.keep_model is False
-            ):
+            if self.is_crash_dump_enabled():
                 await self.create_crash_dump()
 
             if not self.keep_model:
@@ -1389,3 +1417,18 @@ class OpsTest:
         await model.set_config({update_interval_key: fast_interval})
         yield
         await model.set_config({update_interval_key: interval_after})
+
+    def is_crash_dump_enabled(self) -> bool:
+        """Returns whether Juju crash dump is enabled given the current settings."""
+        if self.crash_dump == "always":
+            return True
+        elif self.crash_dump == "on-failure" and self.request.session.testsfailed > 0:
+            return True
+        elif (
+            self.crash_dump == "legacy"
+            and self.request.session.testsfailed > 0
+            and self.keep_model is False
+        ):
+            return True
+        else:
+            return False
