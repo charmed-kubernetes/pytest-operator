@@ -89,8 +89,8 @@ def pytest_addoption(parser: Parser):
     parser.addoption(
         "--no-crash-dump",
         action="store_true",
-        help="(Deprecated - use --crash-dump=never instead.  Overrides anything"
-        " specified in --crash-dump)\n"
+        help="(Deprecated - use '--crash-dump=never' instead.  Overrides anything"
+        " specified in '--crash-dump')\n"
         "Disable automatic runs of juju-crashdump after failed tests, "
         "juju-crashdump runs by default.",
     )
@@ -101,7 +101,7 @@ def pytest_addoption(parser: Parser):
         help="Sets whether to output a juju-crashdump after tests.  Options are:\n"
         "* always: dumps after all tests\n"
         "* on-failure: dumps after failed tests\n"
-        "* legacy: (DEFAULT) dumps after a failed test if --keep-models is False\n"
+        "* legacy: (DEFAULT) dumps after a failed test if '--keep-models' is False\n"
         "* never: never dumps",
     )
     parser.addoption(

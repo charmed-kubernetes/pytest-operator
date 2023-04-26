@@ -40,8 +40,17 @@ only work if the `--model` parameter is also provided.
 
 ### `--no-crash-dump`
 
-This flag disables the automatic execution of `juju-crashdump`, which runs by default
-(if a command is available) after failed tests.
+(Deprecated - use '--crash-dump=never' instead.  Overrides anything specified in 
+'--crash-dump') This flag disables the automatic execution of `juju-crashdump`, 
+which runs by default (if a command is available) after failed tests.
+
+### `--crash-dump`
+
+Sets whether to output a juju-crashdump after tests.  Options are:
+* always: dumps after all tests
+* on-failure: dumps after failed tests
+* legacy: (DEFAULT) dumps after a failed test if '--keep-models' is False
+* never: never dumps
 
 ### `--crash-dump-output`
 
