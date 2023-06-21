@@ -820,6 +820,7 @@ class OpsTest:
         alias: Optional[str] = None,
         timeout: Optional[Timeout] = None,
         allow_failure: bool = True,
+        destroy_storage: bool = False,
     ):
         """
         Forget a model and wait for it to be removed from the controller.
@@ -831,6 +832,7 @@ class OpsTest:
         @param Optional[float,int] timeout: how long to wait for it to be removed,
                                             if None, don't block waiting for success
         @param          bool allow_failure: if False, failures raise an exception
+        @param        bool destroy_storage: destroy storage when removing model
         """
         if not self._controller:
             log.error("No access to controller, skipping...")
@@ -851,7 +853,9 @@ class OpsTest:
 
             if not self.keep_model:
                 await self._reset(model, allow_failure, timeout=timeout)
-                await self._controller.destroy_model(model_name, force=True)
+                await self._controller.destroy_model(
+                    model_name, force=True, destroy_storage=destroy_storage
+                )
             await model.disconnect()
 
         # stop managing this model now
