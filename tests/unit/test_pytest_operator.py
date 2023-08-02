@@ -276,7 +276,7 @@ async def test_plugin_fetch_resources(tmp_path_factory, resource_charm):
     arch_resources = ops_test.arch_specific_resources(resource_charm)
 
     def dl_rsc(resource, dest_path):
-        assert type(resource) == str
+        assert isinstance(resource, str)
         return dest_path
 
     with patch(
