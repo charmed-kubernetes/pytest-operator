@@ -23,6 +23,7 @@ from typing import (
     Generator,
     Iterable,
     List,
+    Literal,
     MutableMapping,
     Mapping,
     Optional,
@@ -90,8 +91,20 @@ def pytest_addoption(parser: Parser):
     parser.addoption(
         "--no-crash-dump",
         action="store_true",
-        help="Disabled automatic runs of juju-crashdump after failed tests, "
+        help="(Deprecated - use '--crash-dump=never' instead.  Overrides anything"
+        " specified in '--crash-dump')\n"
+        "Disable automatic runs of juju-crashdump after failed tests, "
         "juju-crashdump runs by default.",
+    )
+    parser.addoption(
+        "--crash-dump",
+        action="store",
+        default="legacy",
+        help="Sets whether to output a juju-crashdump after tests.  Options are:\n"
+        "* always: dumps after all tests\n"
+        "* on-failure: dumps after failed tests\n"
+        "* legacy: (DEFAULT) dumps after a failed test if '--keep-models' is False\n"
+        "* never: never dumps",
     )
     parser.addoption(
         "--crash-dump-output",
@@ -126,13 +139,11 @@ def pytest_load_initial_conftests(parser: Parser, args: List[str]) -> None:
 def pytest_configure(config: Config):
     config.addinivalue_line("markers", "abort_on_fail")
     config.addinivalue_line("markers", "skip_if_deployed")
-    # These need to be fixed in libjuju and just clutter things up for tests using this.
-    config.addinivalue_line(
-        "filterwarnings", "ignore:The loop argument:DeprecationWarning"
-    )
-    config.addinivalue_line(
-        "filterwarnings", r"ignore:'with \(yield from lock\)':DeprecationWarning"
-    )
+
+    if config.option.basetemp is None:
+        tox_dir = os.environ.get("TOX_ENV_DIR")
+        if tox_dir:
+            config.option.basetemp = Path(tox_dir) / "tmp/pytest"
 
 
 def pytest_runtest_setup(item):
@@ -142,17 +153,6 @@ def pytest_runtest_setup(item):
         and item.config.getoption("--model") is not None
     ):
         pytest.skip("Skipping deployment because --no-deploy was specified.")
-
-
-@pytest.fixture(scope="session")
-def tmp_path_factory(request):
-    # Override temp path factory to create temp dirs under Tox env so that
-    # confined snaps (e.g., charmcraft) can access them.
-    return pytest.TempPathFactory(
-        given_basetemp=Path(os.environ["TOX_ENV_DIR"]) / "tmp" / "pytest",
-        trace=request.config.trace.get("tmpdir"),
-        _ispytest=True,
-    )
 
 
 def check_deps(*deps):
@@ -239,6 +239,25 @@ async def ops_test(request, tmp_path_factory):
 
 def handle_file_delete_error(function, path, execinfo):
     log.warning(f"Failed to delete '{path}' due to {execinfo[1]}")
+
+
+def validate_crash_dump(crash_dump: str, no_crash_dump: bool):
+    """Validates the crash-dump inputs, raising if they are not accepted values."""
+    if no_crash_dump:
+        log.warning(
+            "Got flag --no-crash-dump.  Ignoring value of flag --crash-dump and "
+            "setting --crash-dump=never"
+        )
+        crash_dump = "never"
+
+    accepted_crash_dump = ["always", "legacy", "on-failure", "never"]
+    if crash_dump not in accepted_crash_dump:
+        raise ValueError(
+            f"Got invalid --crash-dump={crash_dump}, must be one of"
+            f" {accepted_crash_dump}"
+        )
+
+    return crash_dump
 
 
 class FileResource:
@@ -444,7 +463,10 @@ class OpsTest:
         self._init_model_config = request.config.option.model_config
 
         # Flag for enabling the juju-crashdump
-        self.crash_dump = not request.config.option.no_crash_dump
+        self.crash_dump = validate_crash_dump(
+            crash_dump=request.config.option.crash_dump,
+            no_crash_dump=request.config.option.no_crash_dump,
+        )
         self.crash_dump_output = request.config.option.crash_dump_output
 
         # These will be set by _setup_model
@@ -797,9 +819,10 @@ class OpsTest:
 
     async def forget_model(
         self,
-        alias: str,
+        alias: Optional[str] = None,
         timeout: Optional[Timeout] = None,
         allow_failure: bool = True,
+        destroy_storage: bool = False,
     ):
         """
         Forget a model and wait for it to be removed from the controller.
@@ -807,14 +830,18 @@ class OpsTest:
         If the model is not marked as kept, ops_test will destroy the model.
         If timeout is None don't wait on the model to be completely destroyed
 
-        @param                   str alias: alias of the model
+        @param                   str alias: alias of the model (default: current alias)
         @param Optional[float,int] timeout: how long to wait for it to be removed,
                                             if None, don't block waiting for success
         @param          bool allow_failure: if False, failures raise an exception
+        @param        bool destroy_storage: destroy storage when removing model
         """
         if not self._controller:
             log.error("No access to controller, skipping...")
             return
+
+        if not alias:
+            alias = self.current_alias
 
         if alias not in self.models:
             raise ModelNotFoundError(f"{alias} not found")
@@ -823,18 +850,14 @@ class OpsTest:
             await self.log_model()
             model_name = model.info.name
 
-            # NOTE (rgildein): Create juju-crashdump only if any tests failed,
-            # `juju-crashdump` flag is enabled and OpsTest.keep_model == False
-            if (
-                self.request.session.testsfailed > 0
-                and self.crash_dump
-                and self.keep_model is False
-            ):
+            if self.is_crash_dump_enabled():
                 await self.create_crash_dump()
 
             if not self.keep_model:
                 await self._reset(model, allow_failure, timeout=timeout)
-                await self._controller.destroy_model(model_name, force=True)
+                await self._controller.destroy_model(
+                    model_name, force=True, destroy_storage=destroy_storage
+                )
             await model.disconnect()
 
         # stop managing this model now
@@ -909,7 +932,14 @@ class OpsTest:
         self.aborted = True
         pytest.fail(*args, **kwargs)
 
-    async def build_charm(self, charm_path) -> Path:
+    async def build_charm(
+        self,
+        charm_path,
+        bases_index: int = None,
+        verbosity: Optional[
+            Literal["quiet", "brief", "verbose", "debug", "trace"]
+        ] = None,
+    ) -> Path:
         """Builds a single charm.
 
         This can handle charms using the older charms.reactive framework as
@@ -923,29 +953,33 @@ class OpsTest:
         charm_abs = Path(charm_path).absolute()
         metadata_path = charm_path / "metadata.yaml"
         layer_path = charm_path / "layer.yaml"
+        charmcraft_path = charm_path / "charmcraft.yaml"
         charm_name = yaml.safe_load(metadata_path.read_text())["name"]
-        if layer_path.exists():
+        if layer_path.exists() and not charmcraft_path.exists():
             # Handle older, reactive framework charms.
+            # if a charmcraft.yaml file isn't defined for it
             check_deps("charm")
             cmd = ["charm", "build", "--charm-file"]
         else:
             # Handle newer, operator framework charms.
             all_groups = {g.gr_name for g in grp.getgrall()}
             users_groups = {grp.getgrgid(g).gr_name for g in os.getgroups()}
+            cmd = ["charmcraft", "pack"]
+            if bases_index is not None:
+                cmd.append(f"--bases-index={bases_index}")
+            if verbosity:
+                cmd.append(f"--verbosity={verbosity}")
             if self.destructive_mode:
                 # host builder never requires lxd group
-                cmd = ["charmcraft", "pack", "--destructive-mode"]
-            elif "lxd" in users_groups:
-                # user already has lxd group active
-                cmd = ["charmcraft", "pack"]
-            else:
+                cmd.append("--destructive-mode")
+            elif "lxd" not in users_groups:
                 # building with lxd builder and user does't already have lxd group;
                 # make sure it's available and if so, try using `sg` to acquire it
                 assert "lxd" in all_groups, (
                     "Group 'lxd' required but not available; "
                     "ensure that lxd is available or use --destructive-mode"
                 )
-                cmd = ["sg", "lxd", "-c", "charmcraft pack"]
+                cmd = ["sg", "lxd", "-c", " ".join(cmd)]
 
         log.info(f"Building charm {charm_name}")
         start = timer()
@@ -1031,14 +1065,14 @@ class OpsTest:
                 resources[rsc_name].arch = "amd64"
         return resources
 
-    def arch_specific_resources(self, build_charm):
+    def arch_specific_resources(self, built_charm):
         return {
             name: rsc
-            for name, rsc in self.charm_file_resources(build_charm).items()
+            for name, rsc in self.charm_file_resources(built_charm).items()
             if rsc.arch
         }
 
-    async def build_resources(self, build_script: Path):
+    async def build_resources(self, build_script: Path, with_sudo: bool = True):
         build_script = build_script.absolute()
         if not build_script.exists():
             raise FileNotFoundError(
@@ -1048,10 +1082,8 @@ class OpsTest:
         log.info("Build Resources...")
         dst_dir = self.tmp_path / "resources"
         dst_dir.mkdir(exist_ok=True)
-        start = timer()
-        rc, stdout, stderr = await self.run(
-            *shlex.split(f"sudo {build_script}"), cwd=dst_dir, check=False
-        )
+        start, cmd = timer(), ("sudo " if with_sudo else "") + str(build_script)
+        rc, stdout, stderr = await self.run(*shlex.split(cmd), cwd=dst_dir, check=False)
         if rc != 0:
             log.warning(f"{build_script} failed: {(stderr or stdout).strip()}")
         else:
@@ -1411,3 +1443,18 @@ class OpsTest:
         return await get_relation_data(
             provider_endpoint, requirer_endpoint, include_juju_keys
         )
+
+    def is_crash_dump_enabled(self) -> bool:
+        """Returns whether Juju crash dump is enabled given the current settings."""
+        if self.crash_dump == "always":
+            return True
+        elif self.crash_dump == "on-failure" and self.request.session.testsfailed > 0:
+            return True
+        elif (
+            self.crash_dump == "legacy"
+            and self.request.session.testsfailed > 0
+            and self.keep_model is False
+        ):
+            return True
+        else:
+            return False

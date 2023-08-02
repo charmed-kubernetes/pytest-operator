@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from unittest.mock import Mock, AsyncMock, ANY, patch, call, MagicMock, PropertyMock
 from urllib.error import HTTPError
 from pathlib import Path
@@ -11,6 +12,52 @@ import pytest
 from pytest_operator import plugin
 
 log = logging.getLogger(__name__)
+
+ENV = {_: os.environ.get(_) for _ in ["HOME", "TOX_ENV_DIR"]}
+
+
+@patch.object(plugin, "check_deps", Mock())
+@patch.object(plugin.OpsTest, "_setup_model", AsyncMock())
+@patch.object(plugin.OpsTest, "_cleanup_models", AsyncMock())
+def test_tmp_path_with_tox(pytester):
+    pytester.makepyfile(
+        f"""
+        import os
+        from pathlib import Path
+
+        os.environ.update(**{ENV})
+        async def test_with_tox(ops_test):
+            expected_base = Path("{ENV["TOX_ENV_DIR"]}") / "tmp" / "pytest"
+            common = os.path.commonpath([ops_test.tmp_path, expected_base])
+            assert expected_base == Path(common)
+        """
+    )
+    result = pytester.runpytest()
+    result.assert_outcomes(passed=1)
+
+
+@patch.object(plugin, "check_deps", Mock())
+@patch.object(plugin.OpsTest, "_setup_model", AsyncMock())
+@patch.object(plugin.OpsTest, "_cleanup_models", AsyncMock())
+def test_tmp_path_without_tox(request, pytester):
+    pytester.makepyfile(
+        f"""
+        import os
+        from pathlib import Path
+
+        os.environ.update(**{ENV})
+        async def test_without_tox(request, ops_test):
+            unexpected_base = Path("{ENV["TOX_ENV_DIR"]}") / "tmp" / "pytest"
+            common = os.path.commonpath([ops_test.tmp_path, unexpected_base])
+            assert unexpected_base != Path(common)
+
+            expected_base = Path("/tmp/pytest")
+            common = os.path.commonpath([ops_test.tmp_path, expected_base])
+            assert expected_base == Path(common)
+        """
+    )
+    result = pytester.runpytest("--basetemp=/tmp/pytest")
+    result.assert_outcomes(passed=1)
 
 
 async def test_destructive_mode(monkeypatch, tmp_path_factory):
@@ -210,7 +257,7 @@ async def test_plugin_build_resources(tmp_path_factory):
     assert resources and resources == expected_resources
 
 
-def test_plugin_get_resources(tmp_path_factory, resource_charm):
+async def test_plugin_get_resources(tmp_path_factory, resource_charm):
     ops_test = plugin.OpsTest(Mock(**{"module.__name__": "test"}), tmp_path_factory)
     resources = ops_test.arch_specific_resources(resource_charm)
     assert resources.keys() == {"resource-file-arm64", "resource-file"}
@@ -279,19 +326,58 @@ async def test_async_render_bundles(tmp_path_factory):
     assert bundles[0].read_text() == "a: 1"
 
 
-async def test_crash_dump_mode(monkeypatch, tmp_path_factory):
+@pytest.mark.parametrize(
+    "crash_dump, no_crash_dump, n_testsfailed, keep_models, expected_crashdump",
+    [
+        # crash_dump == always && no_crash_dump == False -> always dump
+        ("always", False, 0, True, True),
+        ("always", False, 0, False, True),
+        ("always", False, 1, True, True),
+        ("always", False, 1, False, True),
+        # crash_dump == always && no_crash_dump == True -> never dump
+        ("always", True, 0, True, False),
+        ("always", True, 0, False, False),
+        ("always", True, 1, True, False),
+        ("always", True, 1, False, False),
+        # crash_dump == on-failure && no_crash_dump == False -> dump on failures
+        ("on-failure", False, 0, True, False),
+        ("on-failure", False, 0, False, False),
+        ("on-failure", False, 1, True, True),
+        ("on-failure", False, 1, False, True),
+        # crash_dump == legacy && no_crash_dump == False ->
+        #   dump if failure and keep_model==False
+        ("legacy", False, 0, True, False),
+        ("legacy", False, 0, False, False),
+        ("legacy", False, 1, True, False),
+        ("legacy", False, 1, False, True),
+        # crash_dump == never -> never dump
+        ("never", False, 0, True, False),
+        ("never", False, 0, False, False),
+        ("never", False, 1, True, False),
+        ("never", False, 1, False, False),
+    ],
+)
+async def test_crash_dump_mode(
+    crash_dump,
+    no_crash_dump,
+    n_testsfailed,
+    keep_models,
+    expected_crashdump,
+    monkeypatch,
+    tmp_path_factory,
+):
     """Test running juju-crashdump in OpsTest.cleanup."""
     patch = monkeypatch.setattr
     patch(plugin.OpsTest, "run", mock_run := AsyncMock(return_value=(0, "", "")))
-    ops_test = plugin.OpsTest(
-        mock_request := Mock(**{"module.__name__": "test"}), tmp_path_factory
-    )
-    ops_test.crash_dump = True
+    mock_request = Mock(**{"module.__name__": "test"})
+    mock_request.config.option.crash_dump = crash_dump
+    mock_request.config.option.no_crash_dump = no_crash_dump
+    mock_request.config.option.keep_models = keep_models
+    ops_test = plugin.OpsTest(mock_request, tmp_path_factory)
     model = MagicMock()
     model.machines.values.return_value = []
     model.disconnect = AsyncMock()
     model.block_until = AsyncMock()
-    ops_test._init_keep_model = None
     ops_test._current_alias = "main"
     ops_test._models = {
         ops_test.current_alias: plugin.ModelState(
@@ -302,36 +388,36 @@ async def test_crash_dump_mode(monkeypatch, tmp_path_factory):
     ops_test.log_model = AsyncMock()
     ops_test._controller = AsyncMock()
 
-    # 0 tests failed
-    mock_request.session.testsfailed = 0
+    mock_request.session.testsfailed = n_testsfailed
 
     await ops_test._cleanup_model()
 
-    mock_run.assert_not_called()
-    mock_run.reset_mock()
-
-    # 1 tests failed
-    ops_test._current_alias = "main"
-    ops_test._models = {
-        ops_test.current_alias: plugin.ModelState(
-            model, False, "test", "local", "model"
+    if expected_crashdump:
+        mock_run.assert_called_once_with(
+            "juju-crashdump",
+            "-s",
+            "-m",
+            "test:model",
+            "-a",
+            "debug-layer",
+            "-a",
+            "config",
         )
-    }
-    mock_request.session.testsfailed = 1
+    else:
+        mock_run.assert_not_called()
 
-    await ops_test._cleanup_model()
 
-    mock_run.assert_called_once_with(
-        "juju-crashdump",
-        "-s",
-        "-m",
-        "test:model",
-        "-a",
-        "debug-layer",
-        "-a",
-        "config",
-    )
-    mock_run.reset_mock()
+def test_crash_dump_mode_invalid_input(monkeypatch, tmp_path_factory):
+    """Test running juju-crashdump in OpsTest.cleanup."""
+    patch = monkeypatch.setattr
+    patch(plugin.OpsTest, "run", AsyncMock(return_value=(0, "", "")))
+    mock_request = Mock(**{"module.__name__": "test"})
+    mock_request.config.option.crash_dump = "not-a-real-option"
+    mock_request.config.option.no_crash_dump = False
+    mock_request.config.option.keep_models = False
+
+    with pytest.raises(ValueError):
+        plugin.OpsTest(mock_request, tmp_path_factory)
 
 
 async def test_create_crash_dump(monkeypatch, tmp_path_factory):
