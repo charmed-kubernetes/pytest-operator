@@ -1434,8 +1434,9 @@ class OpsTest:
     ) -> RelationData:
         """Get relation databag contents for both sides of a juju relation.
         Note: Depends on the presense of the juju client snap
-        
-        include_juju_keys = True includes egress-subnets, ingress-address, and private-address
+
+        include_juju_keys = True includes egress-subnets, ingress-address,
+                                 and private-address
         refresh_cache = True will force a read-through cache from the controller
 
         Usage:
