@@ -1430,8 +1430,13 @@ class OpsTest:
         provider_endpoint: str,
         requirer_endpoint: str,
         include_juju_keys: bool = False,
+        refresh_cache: bool = False,
     ) -> RelationData:
         """Get relation databag contents for both sides of a juju relation.
+        Note: Depends on the presense of the juju client snap
+        
+        include_juju_keys = True includes egress-subnets, ingress-address, and private-address
+        refresh_cache = True will force a read-through cache from the controller
 
         Usage:
         >>> data = await ops_test.get_relation_data(
@@ -1440,8 +1445,15 @@ class OpsTest:
         >>> assert data.provider.application_data == {'foo': 'bar', 'baz': 'qux'}
 
         """
+        if not self.model:
+            raise RuntimeError("No model currently set.")
+
         return await get_relation_data(
-            provider_endpoint, requirer_endpoint, include_juju_keys
+            self.model,
+            provider_endpoint,
+            requirer_endpoint,
+            include_juju_keys,
+            refresh_cache,
         )
 
     def is_crash_dump_enabled(self) -> bool:

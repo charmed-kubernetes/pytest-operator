@@ -5,4 +5,7 @@ description: |
   TODO: fill out the charm's description
 summary: |
   TODO: fill out the charm's summary
-series: [focal]
+series: [focal, jammy]
+provides:
+  operator:
+    interface: unique-test-relation

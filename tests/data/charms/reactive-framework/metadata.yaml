@@ -5,5 +5,9 @@ description: |
     a test charm
 series:
   - focal
+  - jammy
 tags:
   - misc
+requires:
+  reactive:
+    interface: unique-test-relation

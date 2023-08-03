@@ -1,8 +1,11 @@
 import asyncio
+import os
+import shlex
 from dataclasses import dataclass
 from subprocess import PIPE, Popen
 from typing import Dict
 
+from juju.model import Model
 import yaml
 
 _JUJU_DATA_CACHE = {}
@@ -15,7 +18,9 @@ def _purge(data: dict):
             del data[key]
 
 
-async def _get_unit_info(unit_name: str) -> dict:
+async def _get_unit_info(
+    model: Model | str, unit_name: str, *, refresh_cache: bool = False
+) -> dict:
     """Returns unit-info data structure.
 
      for example:
@@ -39,15 +44,29 @@ async def _get_unit_info(unit_name: str) -> dict:
       provider-id: traefik-k8s-0
       address: 10.1.232.144
     """
-    if cached_data := _JUJU_DATA_CACHE.get(unit_name):
-        return cached_data
 
-    proc = Popen(f"juju show-unit {unit_name}".split(" "), stdout=PIPE)
+    if cached_data := _JUJU_DATA_CACHE.get(unit_name):
+        if refresh_cache:
+            _JUJU_DATA_CACHE.pop(unit_name)
+        else:
+            return cached_data
+
+    if isinstance(model, Model):
+        model_str = model.name
+    elif isinstance(model, str):
+        model_str = model
+
+    new_env = os.environ.copy()
+    new_env["JUJU_MODEL"] = model_str
+    cmd = shlex.split(f"juju show-unit {unit_name}")
+
+    proc = Popen(cmd, stdout=PIPE, stderr=PIPE, env=new_env)
     raw_data = proc.stdout.read().decode("utf-8").strip()
     if not raw_data:
         raise ValueError(
             f"no unit info could be grabbed for {unit_name}; "
-            f"are you sure it's a valid unit name?"
+            f"are you sure it's a valid unit name?\n"
+            f"{proc.stderr.read().decode()}"
         )
 
     data = yaml.safe_load(raw_data)
@@ -78,16 +97,22 @@ class UnitRelationData:
 
 
 async def _get_endpoint_content(
-    obj: str, other_obj, include_default_juju_keys: bool = False
+    model: Model,
+    obj: str,
+    other_obj: str,
+    include_default_juju_keys: bool = False,
+    refresh_cache: bool = False,
 ) -> UnitRelationData:
-    """Get the content of the databag of `obj`, relative to `other_obj`."""
+    """Get the content of the databag  `obj` sent to `other_obj`."""
     endpoint = None
     other_unit_name = other_obj.split(":")[0] if ":" in other_obj else other_obj
     if ":" in obj:
         unit_name, endpoint = obj.split(":")
     else:
         unit_name = obj
-    data = (await _get_unit_info(unit_name))[unit_name]
+    data = (await _get_unit_info(model, unit_name, refresh_cache=refresh_cache))[
+        unit_name
+    ]
     is_leader = data["leader"]
 
     relation_infos = data.get("relation-info")
@@ -104,8 +129,11 @@ async def _get_endpoint_content(
 
     related_units_data_raw = relation_data_raw["related-units"]
 
-    other_unit_name = next(iter(related_units_data_raw.keys()))
-    other_unit_info = await _get_unit_info(other_unit_name)
+    if not other_unit_name:
+        other_unit_name = next(iter(related_units_data_raw.keys()))
+    other_unit_info = await _get_unit_info(
+        model, other_unit_name, refresh_cache=refresh_cache
+    )
     other_unit_relation_infos = other_unit_info[other_unit_name]["relation-info"]
     remote_data_raw = _get_relation_by_endpoint(
         other_unit_relation_infos, relation_data_raw["related-endpoint"], unit_name
@@ -128,7 +156,11 @@ class RelationData:
 
 
 async def get_relation_data(
-    provider_endpoint: str, requirer_endpoint: str, include_juju_keys: bool = False
+    model: Model,
+    provider_endpoint: str,
+    requirer_endpoint: str,
+    include_juju_keys: bool = False,
+    refresh_cache: bool = False,
 ) -> RelationData:
     """Get relation databag contents for both sides of a juju relation.
 
@@ -138,7 +170,19 @@ async def get_relation_data(
     >>> assert data.provider.application_data['key'] = 'foo'
     """
     provider_data, requirer_data = await asyncio.gather(
-        _get_endpoint_content(provider_endpoint, requirer_endpoint, include_juju_keys),
-        _get_endpoint_content(requirer_endpoint, provider_endpoint, include_juju_keys),
+        _get_endpoint_content(
+            model,
+            provider_endpoint,
+            requirer_endpoint,
+            include_juju_keys,
+            refresh_cache,
+        ),
+        _get_endpoint_content(
+            model,
+            requirer_endpoint,
+            provider_endpoint,
+            include_juju_keys,
+            refresh_cache,
+        ),
     )
     return RelationData(provider_data, requirer_data)
