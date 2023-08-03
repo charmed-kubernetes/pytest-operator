@@ -19,7 +19,7 @@ def _purge(data: dict):
 
 
 async def _get_unit_info(
-    model: Model | str, unit_name: str, *, refresh_cache: bool = False
+    model: Model, unit_name: str, *, refresh_cache: bool = False
 ) -> dict:
     """Returns unit-info data structure.
 
@@ -51,13 +51,8 @@ async def _get_unit_info(
         else:
             return cached_data
 
-    if isinstance(model, Model):
-        model_str = model.name
-    elif isinstance(model, str):
-        model_str = model
-
     new_env = os.environ.copy()
-    new_env["JUJU_MODEL"] = model_str
+    new_env["JUJU_MODEL"] = model.name
     cmd = shlex.split(f"juju show-unit {unit_name}")
 
     proc = Popen(cmd, stdout=PIPE, stderr=PIPE, env=new_env)
