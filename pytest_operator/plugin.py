@@ -706,21 +706,14 @@ class OpsTest:
         if not self._controller:
             self._controller = Controller()
             await self._controller.connect(self.controller_name)
-        if not self._init_model_name:
-            # no --model flag specified, automatically generate a model
-            config = self.read_model_config(self._init_model_config)
-            model_state = await self._add_model(
-                self._init_cloud_name,
-                self.default_model_name,
-                config=config,
-            )
-        else:
-            # --model flag specified, reuse existing model and set keep flag
-            model_state = await self._connect_to_model(
-                self.controller_name, self._init_model_name
-            )
 
-        self._models[alias] = model_state
+        await self.track_model(
+            alias, 
+            model_name=self._init_model_name or self.default_model_name, 
+            cloud_name=self._init_cloud_name,
+            keep=self._init_model_name is not None,
+        )
+
         self._current_alias = alias
 
     async def track_model(

@@ -510,6 +510,7 @@ async def test_fixture_set_up_existing_model(
     ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
     assert ops_test.model is None
 
+    mock_juju.controller.list_models = AsyncMock(return_value=["this-model"])
     await ops_test._setup_model()
     mock_juju.model.connect.assert_called_with("this-controller:this-model")
     assert ops_test.model == mock_juju.model
@@ -552,7 +553,7 @@ async def test_fixture_set_up_automatic_model(
 
     await ops_test._setup_model()
     mock_juju.controller.add_model.assert_called_with(
-        model_name, "this-cloud", config=None
+        model_name, "this-cloud"
     )
     juju_cmd.assert_called_with(ops_test, "models")
     assert ops_test.model == mock_juju.model
