@@ -24,7 +24,7 @@ jobs:
     timeout-minutes: 40
     strategy:
       matrix:
-        juju: ['2.9', '3.0']
+        juju: ['2.9']
     steps:
     - name: Check out code
       uses: actions/checkout@v3
@@ -40,7 +40,7 @@ jobs:
         juju-channel: ${{ matrix.juju }}/stable
 
     - name: Run integration tests
-      run: tox -e integration-3.0
+      run: tox -e integration-2.9
 
     - name: Collect Charmcraft Logs
       if: ${{ failure() }}
@@ -61,7 +61,7 @@ jobs:
     timeout-minutes: 40
     strategy:
       matrix:
-        juju: ['3.1']
+        juju: ['3.1', '3.2']
     steps:
     - name: Check out code
       uses: actions/checkout@v3

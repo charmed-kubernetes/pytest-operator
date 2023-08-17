@@ -708,8 +708,8 @@ class OpsTest:
             await self._controller.connect(self.controller_name)
 
         await self.track_model(
-            alias, 
-            model_name=self._init_model_name or self.default_model_name, 
+            alias,
+            model_name=self._init_model_name or self.default_model_name,
             cloud_name=self._init_cloud_name,
             keep=self._init_model_name is not None,
         )

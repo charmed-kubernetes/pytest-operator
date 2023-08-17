@@ -276,7 +276,7 @@ async def test_plugin_fetch_resources(tmp_path_factory, resource_charm):
     arch_resources = ops_test.arch_specific_resources(resource_charm)
 
     def dl_rsc(resource, dest_path):
-        assert type(resource) == str
+        assert isinstance(resource, str)
         return dest_path
 
     with patch(
@@ -552,9 +552,7 @@ async def test_fixture_set_up_automatic_model(
     assert ops_test.model is None
 
     await ops_test._setup_model()
-    mock_juju.controller.add_model.assert_called_with(
-        model_name, "this-cloud"
-    )
+    mock_juju.controller.add_model.assert_called_with(model_name, "this-cloud")
     juju_cmd.assert_called_with(ops_test, "models")
     assert ops_test.model == mock_juju.model
     assert ops_test.model_full_name == f"this-controller:{model_name}"
