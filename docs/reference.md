@@ -12,8 +12,17 @@ Juju controller to use. If not provided, it will use the current controller.
 
 ### `--model`
 
-Juju model to use. If not provided, a new model will be created for each test module.
-All tests within a module will share the same model.
+Juju model to use. 
+
+If not provided, a new model will be created for each test module file.
+- All tests within a module will share the same model.
+- The model will be destroyed at the end of the test module's scope
+
+If provided, `ops_test` will attempt to use an existing model by this name
+on the specified controller.  
+* If that model does exist, it will be reused
+* If that model doesn't exist, a new model by this name will be created
+* The model will not be destroyed at the end of the test module's scope
 
 ### `--keep-models`
 
