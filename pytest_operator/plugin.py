@@ -1005,9 +1005,13 @@ class OpsTest:
                 f"Failed to build charm {charm_path}:\n{stderr}\n{stdout}"
             )
 
-        charm_file_src = next(charm_abs.glob(f"{charm_name}*.charm"))
-        charm_file_dst = charms_dst_dir / charm_file_src.name
-        charm_file_src.rename(charm_file_dst)
+        # If charmcraft.yaml has multiple bases, then multiple charms would be generated.
+        for charm_file_src in charm_abs.glob(f"{charm_name}*.charm"):
+            charm_file_dst = charms_dst_dir / charm_file_src.name
+            charm_file_src.rename(charm_file_dst)
+
+        # Even though we may have multiple *.charm file, for backwards compatibility we can
+        # only return one.
         return charm_file_dst
 
     async def build_charms(self, *charm_paths) -> Mapping[str, Path]:
