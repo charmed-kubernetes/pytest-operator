@@ -552,7 +552,9 @@ async def test_fixture_set_up_automatic_model(
     assert ops_test.model is None
 
     await ops_test._setup_model()
-    mock_juju.controller.add_model.assert_called_with(model_name, "this-cloud")
+    mock_juju.controller.add_model.assert_called_with(
+        model_name, "this-cloud", config=None
+    )
     juju_cmd.assert_called_with(ops_test, "models")
     assert ops_test.model == mock_juju.model
     assert ops_test.model_full_name == f"this-controller:{model_name}"

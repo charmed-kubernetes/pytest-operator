@@ -712,6 +712,7 @@ class OpsTest:
             model_name=self._init_model_name or self.default_model_name,
             cloud_name=self._init_cloud_name,
             keep=self._init_model_name is not None,
+            config=self.read_model_config(self._init_model_config),
         )
 
         self._current_alias = alias
