@@ -31,7 +31,7 @@ setup(
     install_requires=[
         "ipdb",
         "pytest",
-        "pytest-asyncio",
+        "pytest-asyncio<0.23",
         "pyyaml",
         "juju",
         "jinja2",
