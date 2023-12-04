@@ -12,8 +12,17 @@ Juju controller to use. If not provided, it will use the current controller.
 
 ### `--model`
 
-Juju model to use. If not provided, a new model will be created for each test module.
-All tests within a module will share the same model.
+Juju model to use. 
+
+If not provided, a new model will be created for each test module file.
+- All tests within a module will share the same model.
+- The model will be destroyed at the end of the test module's scope
+
+If provided, `ops_test` will attempt to use an existing model by this name
+on the specified controller.  
+* If that model does exist, it will be reused
+* If that model doesn't exist, a new model by this name will be created
+* The model will not be destroyed at the end of the test module's scope
 
 ### `--keep-models`
 
@@ -23,7 +32,7 @@ Keep any automatically created models.
 
 Path to a yaml file which will be applied to the model on creation.
 
- * ignored if `--model` supplied 
+ * ignored if `--model` supplied
  * if the specified file doesn't exist, an error will be raised.
 
 ### `--model-alias`
@@ -36,12 +45,21 @@ name of the model as known by juju.  For that see `--model`.
 ### `--no-deploy`
 
 Flag that guarantees skipping the function marked with `skip_if_deployed`. The skip will
-only work if the `--model` parameter is also provided. 
+only work if the `--model` parameter is also provided.
 
 ### `--no-crash-dump`
 
-This flag disables the automatic execution of `juju-crashdump`, which runs by default
-(if a command is available) after failed tests.
+(Deprecated - use '--crash-dump=never' instead.  Overrides anything specified in 
+'--crash-dump') This flag disables the automatic execution of `juju-crashdump`, 
+which runs by default (if a command is available) after failed tests.
+
+### `--crash-dump`
+
+Sets whether to output a juju-crashdump after tests.  Options are:
+* always: dumps after all tests
+* on-failure: dumps after failed tests
+* legacy: (DEFAULT) dumps after a failed test if '--keep-models' is False
+* never: never dumps
 
 ### `--crash-dump-output`
 
@@ -57,11 +75,22 @@ This is the primary interface for the plugin, and provides an instance of the [`
 class](#OpsTest).
 
 
-### `tmp_path_factory`
+### `basetemp`
 
-This overrides the default `tmp_path_factory` fixture from pytest to relocate any
-temporary directories to under `$TOX_ENV_DIR/tmp/pytest`. This is done because strictly
-confined snaps, like `charmcraft`, can't access the global `/tmp`.
+Some snap tools are dropping their `classic` snap support, and will
+lose the ability to write anywhere on the filesystem. Tests should
+be run to confirm they're located within the user's `HOME` directory
+so strictly confined snaps can write to temporary directories.
+
+Temp Directories can be moved with the following options:
+
+If `basetemp` is provided as pytest configuration
+   * pytest will create a directory here for temporary files
+If `basetemp` is not provided as pytest configuration
+   * the plugin will look to `TOX_ENV_DIR` environment variable
+   * if that env var is set, `${tox_env_dir}/tmp/pytest` will be used
+If `basetemp` and `TOX_ENV_DIR` are both unset
+   * pytest is responsible for creating a temporary directory
 
 
 ### `event_loop`
@@ -103,15 +132,6 @@ subsequent refresh of the charm.
 ---
 
 
-## Warning Filters
-
-The asyncio library changed how the event loop is managed and the explicit parameter to
-a lot of functions is now deprecated, but python-libjuju hasn't been updated to address
-these (see [issue #461](https://github.com/juju/python-libjuju/issues/461)). This
-generates an extreme amount of noise on every test run and makes it hard to see the test
-results or reason for failure, so these warnings are automatically ignored.
-
-
 ## `OpsTest`
 
 ### Attributes
@@ -140,13 +160,21 @@ The name of the controller being used.
 
 #### `model_name`
 
-The name of the juju model referenced by the current aliased model. 
+The name of the juju model referenced by the current aliased model.
 If the alias is set as the first model, that name will reflect its automatically generated
 name or the name provided by the `--model` command-line parameter.
 
+#### `Bundle`
+
+Dataclass which represents a juju bundle.
+
+```python
+  bundle = ops_test.Bundle("charmed-kubernetes", "latest/edge")
+```
+
 ### Methods
 
-#### `async def build_charm(self, charm_path)`
+#### `async def build_charm(self, charm_path, bases_index = None, verbosity = None)`
 
 Builds a charm.
 
@@ -232,6 +260,25 @@ A helper which renders multiple bundles at once.
 Returns a list of `pathlib.Path` instances for each bundle, in the same order as the
 args.
 
+#### `async def async_render_bundles(self, *bundles: BundleOpt, **context) -> List[Path]:`
+
+A helper which renders a set of templated bundles using Jinja2.
+
+Returns a list of `pathlib.Path` instances for each bundle, in the same order as the
+overlays.
+
+provide as many bundles as necessary from any of the follow types:
+  * `str`
+    * can be YAML content
+    * can be a `str` that is `os.pathlike` and ends with an extension of `yaml`, `yml`, or even `.yaml.j2`
+  * `Path`
+    * Path to any text based file which can be loaded by `yaml.safe_load(..)`
+  * `OpsTest.Bundle`
+    * bundles can be downloaded from charmhub using a Bundle object.
+      The bundle is downloaded, unpacked, and its `bundle.yaml` file is used as the content.
+
+      See [ops_test.Bundle](#Bundle)
+
 
 #### `async def run(self, *cmd: str, cwd: Optional[os.PathLike] = None, check: bool = False, fail_msg: Optional[str] = None, stdin: Optional[bytes] = None)`
 
@@ -248,6 +295,23 @@ Runs a Juju CLI command.
 Useful for cases where python-libjuju sees things differently than the Juju CLI. Will set
 `JUJU_MODEL`, so manually passing in `-m model-name` is unnecessary.
 
+#### `async def fast_forward(self, fast_interval: str = "10s", slow_interval: Optional[str] = None)`
+
+Temporarily speed up update-status firing rate for the current model.
+Returns an async context manager that temporarily sets update-status firing rate to `fast_interval`.
+If provided, when the context exits the update-status firing rate will be set to `slow_interval`. Otherwise, it will be set to the previous value.
+
+* If `fast_interval` is provided, the update-status firing rate will be set to that value upon entering the context. Default is 10s.
+* If `slow_interval` is provided, after the context exits the update-status firing rate will be set to that value; otherwise, to the value it had before the context was entered.
+
+It is effectively a shortcut for:
+```python
+    await ops_test.model.set_config({"update-status-hook-interval": <fast-interval>})
+
+    # do something
+
+    await ops_test.model.set_config({"update-status-hook-interval": <slow-interval>})
+```
 
 #### `def abort(self, *args, **kwargs)`
 
@@ -268,7 +332,7 @@ is cleaned up.
 
 #### `async def track_model(self, alias: str, model_name: Optional[str] = None, cloud_name: Optional[str] = None, use_existing: Optional[bool] = None, keep: Optional[bool] = None, **kwargs,) -> Model`
 
-Indicate to `ops_test` to track a new model which is automatically created in juju or an existing juju model referenced by model_name. 
+Indicate to `ops_test` to track a new model which is automatically created in juju or an existing juju model referenced by model_name.
 This allows `ops_test` to track multiple models on various clouds by a unique alias name.
 
 ##### Key parameters:
@@ -279,7 +343,7 @@ This allows `ops_test` to track multiple models on various clouds by a unique al
   * `None` (default): `ops_test` will re-use an existing model-name if provided, otherwise False
   * `False`: `ops_test` creates a new model
   * `True`: `ops_test` won't create a new model, but will connect to an existing model by `model_name`
-* `keep`: 
+* `keep`:
   * `None` (default): inherit boolean value of `use_existing`
   * `False`: `ops_test` will destroy at the end of testing
   * `True`: `ops_test` won't destroy at the end of testing
@@ -291,7 +355,7 @@ This allows `ops_test` to track multiple models on various clouds by a unique al
 await ops_test.track_model("alias")
 
 # make a new model with any juju name but don't destroy it when the tests are over
-await ops_test.track_model("alias", keep=True)  
+await ops_test.track_model("alias", keep=True)
 
 # Invalid, can't reuse an existing model when the model_name isn't provided
 await ops_test.track_model("alias", use_existing=True)
@@ -320,17 +384,17 @@ await ops_test.track_model("alias", model_name="bob")
 await ops_test.track_model("alias", model_name="bob", keep=True)
 ```
 
-#### `async def forget_model(self, alias: str, timeout: Optional[Union[float, int]] = None)`
+#### `async def forget_model(self, alias: Optional[str] = None, timeout: Optional[Union[float, int]] = None)`
 
 Indicate to `ops_test` to forget an existing model and `destroy` that model except under the following circumstances.
 
 * If `--keep-models` was passed as a tox argument, no models will be destroyed.
 * If `--model=<specific model>` was passed as a tox argument, this specific model will not be destroyed.
 
-A Timeout Exception will be raised if a `timeout` value is specified and the model isn't destroyed 
+A Timeout Exception will be raised if a `timeout` value is specified and the model isn't destroyed
 within that number of seconds.
 
-it's possible to determine if the model is a candidate for destroying using 
+it's possible to determine if the model is a candidate for destroying using
 ```python
     assert ops_test._init_keep_model is False # this flag is set when the keep-models argument is passed to pytest
     assert ops_test.models["main"].keep is False  # by default, we forget and destroy models
@@ -341,7 +405,7 @@ it's possible to determine if the model is a candidate for destroying using
 #### `def model_context(self, alias: str) -> Generator[Model, None, None]:`
 
 The only way to switch between tracked models is by using this method to change
-the context of the model to which the tests refer.   
+the context of the model to which the tests refer.
 
 For example, assume there are two models being tracked by ops_test: "main" and "secondary"
 The following test would `PASS` due to the nature of `model_context`'s function.

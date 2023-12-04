@@ -10,52 +10,84 @@ jobs:
     with:
       fail-on-error: "true"
 
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-    - name: Check out code
-      uses: actions/checkout@v2
-    - name: Setup Python
-      uses: actions/setup-python@v2
-      with:
-        python-version: 3.9
-    - name: Install Dependencies
-      run: |
-        pip install tox
-    - name: Run lint
-      run: tox -e lint
+  lint-unit:
+    name: Lint Unit
+    uses: charmed-kubernetes/workflows/.github/workflows/lint-unit.yaml@main
+    with:
+      python: "['3.8', '3.9', '3.10', '3.11']"
+    needs:
+      - call-inclusive-naming-check
 
-  unit:
-    name: Unit Tests
-    runs-on: ubuntu-latest
-    steps:
-    - name: Check out code
-      uses: actions/checkout@v2
-    - name: Setup Python
-      uses: actions/setup-python@v2
-      with:
-        python-version: 3.9
-    - name: Install Dependencies
-      run: |
-        pip install tox
-    - name: Run unit tests
-      run: tox -e unit
-
-  integration-test:
-    name: Integration test with LXD
-    runs-on: ubuntu-latest
+  integration-test-3-0:
+    name: Integration test with juju
+    runs-on: ubuntu-22.04
     timeout-minutes: 40
+    strategy:
+      matrix:
+        juju: ['2.9']
     steps:
     - name: Check out code
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
+
     - name: Setup Python
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v4
       with:
-        python-version: 3.8
+        python-version: '3.10'
+
     - name: Setup operator test environment
       uses: charmed-kubernetes/actions-operator@main
       with:
-        lxd-channel: 4.24/stable
+        juju-channel: ${{ matrix.juju }}/stable
+
+    - name: Run integration tests
+      run: tox -e integration-2.9
+
+    - name: Collect Charmcraft Logs
+      if: ${{ failure() }}
+      run: |
+        mkdir -p tmp/
+        mv $HOME/.local/state/charmcraft/log/* tmp/ | true
+
+    - name: Upload debug artifacts
+      if: ${{ failure() }}
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-run-artifacts
+        path: tmp
+
+  integration-test:
+    name: Integration test with juju
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    strategy:
+      matrix:
+        juju: ['3.1', '3.2']
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v3
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Setup operator test environment
+      uses: charmed-kubernetes/actions-operator@main
+      with:
+        juju-channel: ${{ matrix.juju }}/stable
+
     - name: Run integration tests
       run: tox -e integration
+
+    - name: Collect Charmcraft Logs
+      if: ${{ failure() }}
+      run: |
+        mkdir -p tmp/
+        mv $HOME/.local/state/charmcraft/log/* tmp/ | true
+
+    - name: Upload debug artifacts
+      if: ${{ failure() }}
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-run-artifacts
+        path: tmp

@@ -23,9 +23,11 @@ from typing import (
     Generator,
     Iterable,
     List,
+    Literal,
     MutableMapping,
     Mapping,
     Optional,
+    TypeVar,
     Tuple,
     Union,
 )
@@ -87,8 +89,20 @@ def pytest_addoption(parser: Parser):
     parser.addoption(
         "--no-crash-dump",
         action="store_true",
-        help="Disabled automatic runs of juju-crashdump after failed tests, "
+        help="(Deprecated - use '--crash-dump=never' instead.  Overrides anything"
+        " specified in '--crash-dump')\n"
+        "Disable automatic runs of juju-crashdump after failed tests, "
         "juju-crashdump runs by default.",
+    )
+    parser.addoption(
+        "--crash-dump",
+        action="store",
+        default="legacy",
+        help="Sets whether to output a juju-crashdump after tests.  Options are:\n"
+        "* always: dumps after all tests\n"
+        "* on-failure: dumps after failed tests\n"
+        "* legacy: (DEFAULT) dumps after a failed test if '--keep-models' is False\n"
+        "* never: never dumps",
     )
     parser.addoption(
         "--crash-dump-output",
@@ -123,13 +137,11 @@ def pytest_load_initial_conftests(parser: Parser, args: List[str]) -> None:
 def pytest_configure(config: Config):
     config.addinivalue_line("markers", "abort_on_fail")
     config.addinivalue_line("markers", "skip_if_deployed")
-    # These need to be fixed in libjuju and just clutter things up for tests using this.
-    config.addinivalue_line(
-        "filterwarnings", "ignore:The loop argument:DeprecationWarning"
-    )
-    config.addinivalue_line(
-        "filterwarnings", r"ignore:'with \(yield from lock\)':DeprecationWarning"
-    )
+
+    if config.option.basetemp is None:
+        tox_dir = os.environ.get("TOX_ENV_DIR")
+        if tox_dir:
+            config.option.basetemp = Path(tox_dir) / "tmp/pytest"
 
 
 def pytest_runtest_setup(item):
@@ -226,6 +238,25 @@ async def ops_test(request, tmp_path_factory):
 
 def handle_file_delete_error(function, path, execinfo):
     log.warning(f"Failed to delete '{path}' due to {execinfo[1]}")
+
+
+def validate_crash_dump(crash_dump: str, no_crash_dump: bool):
+    """Validates the crash-dump inputs, raising if they are not accepted values."""
+    if no_crash_dump:
+        log.warning(
+            "Got flag --no-crash-dump.  Ignoring value of flag --crash-dump and "
+            "setting --crash-dump=never"
+        )
+        crash_dump = "never"
+
+    accepted_crash_dump = ["always", "legacy", "on-failure", "never"]
+    if crash_dump not in accepted_crash_dump:
+        raise ValueError(
+            f"Got invalid --crash-dump={crash_dump}, must be one of"
+            f" {accepted_crash_dump}"
+        )
+
+    return crash_dump
 
 
 class FileResource:
@@ -377,10 +408,37 @@ class ModelState:
         return f"{self.controller_name}:{self.model_name}"
 
 
+BundleOpt = TypeVar("BundleOpt", str, Path, "OpsTest.Bundle")
+Timeout = TypeVar("Timeout", float, int)
+
+
 class OpsTest:
     """Utility class for testing Operator Charms."""
 
-    _instance = None  # store instance, so we can tell if it's been used yet
+    # store instance, so we can tell if it's been used yet
+    _instance: Optional["OpsTest"] = None
+
+    # objects can be created with `ops_test.Bundle(...)`
+    # since fixtures are autoloaded for pytest users,
+    # this exposes the class instantiation through
+    #     ops_test.Bundle(...)
+    @dataclasses.dataclass
+    class Bundle:
+        """Represents a charmhub bundle."""
+
+        name: str
+        channel: str = "stable"
+        arch: str = "all"
+        series: str = "all"
+
+        @property
+        def juju_download_args(self):
+            """Create cli arguments used in juju download to download bundle to disk."""
+            return [
+                f"--{field.name}={getattr(self, field.name)}"
+                for field in dataclasses.fields(OpsTest.Bundle)
+                if field.default is not dataclasses.MISSING
+            ]
 
     def __init__(self, request, tmp_path_factory):
         self.request = request
@@ -404,7 +462,10 @@ class OpsTest:
         self._init_model_config = request.config.option.model_config
 
         # Flag for enabling the juju-crashdump
-        self.crash_dump = not request.config.option.no_crash_dump
+        self.crash_dump = validate_crash_dump(
+            crash_dump=request.config.option.crash_dump,
+            no_crash_dump=request.config.option.no_crash_dump,
+        )
         self.crash_dump_output = request.config.option.crash_dump_output
 
         # These will be set by _setup_model
@@ -646,21 +707,15 @@ class OpsTest:
         if not self._controller:
             self._controller = Controller()
             await self._controller.connect(self.controller_name)
-        if not self._init_model_name:
-            # no --model flag specified, automatically generate a model
-            config = self.read_model_config(self._init_model_config)
-            model_state = await self._add_model(
-                self._init_cloud_name,
-                self.default_model_name,
-                config=config,
-            )
-        else:
-            # --model flag specified, reuse existing model and set keep flag
-            model_state = await self._connect_to_model(
-                self.controller_name, self._init_model_name
-            )
 
-        self._models[alias] = model_state
+        await self.track_model(
+            alias,
+            model_name=self._init_model_name or self.default_model_name,
+            cloud_name=self._init_cloud_name,
+            keep=self._init_model_name is not None,
+            config=self.read_model_config(self._init_model_config),
+        )
+
         self._current_alias = alias
 
     async def track_model(
@@ -757,9 +812,10 @@ class OpsTest:
 
     async def forget_model(
         self,
-        alias: str,
-        timeout: Optional[Union[float, int]] = None,
+        alias: Optional[str] = None,
+        timeout: Optional[Timeout] = None,
         allow_failure: bool = True,
+        destroy_storage: bool = False,
     ):
         """
         Forget a model and wait for it to be removed from the controller.
@@ -767,14 +823,18 @@ class OpsTest:
         If the model is not marked as kept, ops_test will destroy the model.
         If timeout is None don't wait on the model to be completely destroyed
 
-        @param                   str alias: alias of the model
+        @param                   str alias: alias of the model (default: current alias)
         @param Optional[float,int] timeout: how long to wait for it to be removed,
                                             if None, don't block waiting for success
         @param          bool allow_failure: if False, failures raise an exception
+        @param        bool destroy_storage: destroy storage when removing model
         """
         if not self._controller:
             log.error("No access to controller, skipping...")
             return
+
+        if not alias:
+            alias = self.current_alias
 
         if alias not in self.models:
             raise ModelNotFoundError(f"{alias} not found")
@@ -783,18 +843,14 @@ class OpsTest:
             await self.log_model()
             model_name = model.info.name
 
-            # NOTE (rgildein): Create juju-crashdump only if any tests failed,
-            # `juju-crashdump` flag is enabled and OpsTest.keep_model == False
-            if (
-                self.request.session.testsfailed > 0
-                and self.crash_dump
-                and self.keep_model is False
-            ):
+            if self.is_crash_dump_enabled():
                 await self.create_crash_dump()
 
             if not self.keep_model:
                 await self._reset(model, allow_failure, timeout=timeout)
-                await self._controller.destroy_model(model_name, force=True)
+                await self._controller.destroy_model(
+                    model_name, force=True, destroy_storage=destroy_storage
+                )
             await model.disconnect()
 
         # stop managing this model now
@@ -804,7 +860,7 @@ class OpsTest:
             self._current_alias = None
 
     @staticmethod
-    async def _reset(model: Model, allow_failure, timeout: Optional[int] = None):
+    async def _reset(model: Model, allow_failure, timeout: Optional[Timeout] = None):
         # Forcibly destroy applications/machines in case any units are in error.
         async def _destroy(entity_name: str, **kwargs):
             for key, entity in getattr(model, entity_name).items():
@@ -818,6 +874,7 @@ class OpsTest:
                     log.exception(e)
                     if not allow_failure:
                         raise
+            return None
 
         log.info(f"Resetting model {model.info.name}...")
         await _destroy("applications")
@@ -868,7 +925,14 @@ class OpsTest:
         self.aborted = True
         pytest.fail(*args, **kwargs)
 
-    async def build_charm(self, charm_path) -> Path:
+    async def build_charm(
+        self,
+        charm_path,
+        bases_index: int = None,
+        verbosity: Optional[
+            Literal["quiet", "brief", "verbose", "debug", "trace"]
+        ] = None,
+    ) -> Optional[Path]:
         """Builds a single charm.
 
         This can handle charms using the older charms.reactive framework as
@@ -882,29 +946,33 @@ class OpsTest:
         charm_abs = Path(charm_path).absolute()
         metadata_path = charm_path / "metadata.yaml"
         layer_path = charm_path / "layer.yaml"
+        charmcraft_path = charm_path / "charmcraft.yaml"
         charm_name = yaml.safe_load(metadata_path.read_text())["name"]
-        if layer_path.exists():
+        if layer_path.exists() and not charmcraft_path.exists():
             # Handle older, reactive framework charms.
+            # if a charmcraft.yaml file isn't defined for it
             check_deps("charm")
             cmd = ["charm", "build", "--charm-file"]
         else:
             # Handle newer, operator framework charms.
             all_groups = {g.gr_name for g in grp.getgrall()}
             users_groups = {grp.getgrgid(g).gr_name for g in os.getgroups()}
+            cmd = ["charmcraft", "pack"]
+            if bases_index is not None:
+                cmd.append(f"--bases-index={bases_index}")
+            if verbosity:
+                cmd.append(f"--verbosity={verbosity}")
             if self.destructive_mode:
                 # host builder never requires lxd group
-                cmd = ["charmcraft", "pack", "--destructive-mode"]
-            elif "lxd" in users_groups:
-                # user already has lxd group active
-                cmd = ["charmcraft", "pack"]
-            else:
+                cmd.append("--destructive-mode")
+            elif "lxd" not in users_groups:
                 # building with lxd builder and user does't already have lxd group;
                 # make sure it's available and if so, try using `sg` to acquire it
                 assert "lxd" in all_groups, (
                     "Group 'lxd' required but not available; "
                     "ensure that lxd is available or use --destructive-mode"
                 )
-                cmd = ["sg", "lxd", "-c", "charmcraft pack"]
+                cmd = ["sg", "lxd", "-c", " ".join(cmd)]
 
         log.info(f"Building charm {charm_name}")
         start = timer()
@@ -939,9 +1007,15 @@ class OpsTest:
                 f"Failed to build charm {charm_path}:\n{stderr}\n{stdout}"
             )
 
-        charm_file_src = next(charm_abs.glob(f"{charm_name}*.charm"))
-        charm_file_dst = charms_dst_dir / charm_file_src.name
-        charm_file_src.rename(charm_file_dst)
+        # If charmcraft.yaml has multiple bases
+        # then multiple charms would be generated.
+        charm_file_dst = None
+        for charm_file_src in charm_abs.glob(f"{charm_name}*.charm"):
+            charm_file_dst = charms_dst_dir / charm_file_src.name
+            charm_file_src.rename(charm_file_dst)
+
+        # Even though we may have multiple *.charm file,
+        # for backwards compatibility we can - only return one.
         return charm_file_dst
 
     async def build_charms(self, *charm_paths) -> Mapping[str, Path]:
@@ -990,14 +1064,14 @@ class OpsTest:
                 resources[rsc_name].arch = "amd64"
         return resources
 
-    def arch_specific_resources(self, build_charm):
+    def arch_specific_resources(self, built_charm):
         return {
             name: rsc
-            for name, rsc in self.charm_file_resources(build_charm).items()
+            for name, rsc in self.charm_file_resources(built_charm).items()
             if rsc.arch
         }
 
-    async def build_resources(self, build_script: Path):
+    async def build_resources(self, build_script: Path, with_sudo: bool = True):
         build_script = build_script.absolute()
         if not build_script.exists():
             raise FileNotFoundError(
@@ -1007,10 +1081,8 @@ class OpsTest:
         log.info("Build Resources...")
         dst_dir = self.tmp_path / "resources"
         dst_dir.mkdir(exist_ok=True)
-        start = timer()
-        rc, stdout, stderr = await self.run(
-            *shlex.split(f"sudo {build_script}"), cwd=dst_dir, check=False
-        )
+        start, cmd = timer(), ("sudo " if with_sudo else "") + str(build_script)
+        rc, stdout, stderr = await self.run(*shlex.split(cmd), cwd=dst_dir, check=False)
         if rc != 0:
             log.warning(f"{build_script} failed: {(stderr or stdout).strip()}")
         else:
@@ -1103,7 +1175,62 @@ class OpsTest:
         )
         await self.run(*cmd, check=True)
 
-    def render_bundle(self, bundle, context=None, **kwcontext):
+    async def async_render_bundles(self, *bundles: BundleOpt, **context) -> List[Path]:
+        """
+        Render a set of templated bundles using Jinja2.
+
+        This can be used to populate built charm paths or config values.
+        @param *bundles: objects that are YAML content, pathlike, or charmhub reference
+        @param **context: Additional optional context as keyword args.
+        @returns list of paths to rendered bundles.
+        """
+        ...
+        bundles_dst_dir = self.tmp_path / "bundles"
+        bundles_dst_dir.mkdir(exist_ok=True)
+        re_bundlefile = re.compile(r"\.(yaml|yml)(\.j2)?$")
+        to_render = []
+        for bundle in bundles:
+            if isinstance(bundle, str) and re_bundlefile.search(bundle):
+                content = Path(bundle).read_text()
+            elif isinstance(bundle, str):
+                content = bundle
+            elif isinstance(bundle, Path):
+                content = bundle.read_text()
+            elif isinstance(bundle, OpsTest.Bundle):
+                filepath = f"{bundles_dst_dir}/{bundle.name}.bundle"
+                await self.juju(
+                    "download",
+                    bundle.name,
+                    *bundle.juju_download_args,
+                    f"--filepath={filepath}",
+                    check=True,
+                    fail_msg=f"Couldn't download {bundle.name} bundle",
+                )
+                bundle_zip = ZipPath(filepath, "bundle.yaml")
+                content = bundle_zip.read_text()
+            else:
+                raise TypeError("bundle {} isn't a known Type".format(type(bundle)))
+            to_render.append(content)
+        return self.render_bundles(*to_render, **context)
+
+    def render_bundles(self, *bundles, context=None, **kwcontext) -> List[Path]:
+        """Render one or more templated bundles using Jinja2.
+
+        This can be used to populate built charm paths or config values.
+
+        :param *bundles (str or Path): One or more bundle Paths or YAML contents.
+        :param context (dict): Optional context mapping.
+        :param **kwcontext: Additional optional context as keyword args.
+
+        Returns a list of Paths for the rendered bundles.
+        """
+        # Jinja2 does support async, but rendering bundles should be relatively quick.
+        return [
+            self.render_bundle(bundle, context=context, **kwcontext)
+            for bundle in bundles
+        ]
+
+    def render_bundle(self, bundle, context=None, **kwcontext) -> Path:
         """Render a templated bundle using Jinja2.
 
         This can be used to populate built charm paths or config values.
@@ -1135,23 +1262,6 @@ class OpsTest:
         dst = bundles_dst_dir / bundle_name
         dst.write_text(rendered)
         return dst
-
-    def render_bundles(self, *bundles, context=None, **kwcontext):
-        """Render one or more templated bundles using Jinja2.
-
-        This can be used to populate built charm paths or config values.
-
-        :param *bundles (str or Path): One or more bundle Paths or YAML contents.
-        :param context (dict): Optional context mapping.
-        :param **kwcontext: Additional optional context as keyword args.
-
-        Returns a list of Paths for the rendered bundles.
-        """
-        # Jinja2 does support async, but rendering bundles should be relatively quick.
-        return [
-            self.render_bundle(bundle_path, context=context, **kwcontext)
-            for bundle_path in bundles
-        ]
 
     async def build_lib(self, lib_path):
         """Build a Python library (sdist) for use in a test.
@@ -1286,3 +1396,44 @@ class OpsTest:
             self.render_charm(charm_path, include, exclude, context, **kwcontext)
             for charm_path in charm_paths
         ]
+
+    @contextlib.asynccontextmanager
+    async def fast_forward(
+        self, fast_interval: str = "10s", slow_interval: Optional[str] = None
+    ):
+        """Temporarily speed up update-status firing rate for the current model.
+
+        Returns an async context manager that temporarily sets update-status
+        firing rate to `fast_interval`.
+        If provided, when the context exits the update-status firing rate will
+        be set to `slow_interval`. Otherwise, it will be set to the previous
+        value.
+        """
+        model = self.model
+        if not model:
+            raise RuntimeError("No model currently set.")
+
+        update_interval_key = "update-status-hook-interval"
+        if slow_interval:
+            interval_after = slow_interval
+        else:
+            interval_after = (await model.get_config())[update_interval_key]
+
+        await model.set_config({update_interval_key: fast_interval})
+        yield
+        await model.set_config({update_interval_key: interval_after})
+
+    def is_crash_dump_enabled(self) -> bool:
+        """Returns whether Juju crash dump is enabled given the current settings."""
+        if self.crash_dump == "always":
+            return True
+        elif self.crash_dump == "on-failure" and self.request.session.testsfailed > 0:
+            return True
+        elif (
+            self.crash_dump == "legacy"
+            and self.request.session.testsfailed > 0
+            and self.keep_model is False
+        ):
+            return True
+        else:
+            return False
