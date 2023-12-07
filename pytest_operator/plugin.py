@@ -946,7 +946,10 @@ class OpsTest:
         metadata_path = charm_path / "metadata.yaml"
         layer_path = charm_path / "layer.yaml"
         charmcraft_path = charm_path / "charmcraft.yaml"
-        charm_name = yaml.safe_load(metadata_path.read_text())["name"]
+        if metadata_path.exists():
+            charm_name = yaml.safe_load(metadata_path.read_text())["name"]
+        else:
+            charm_name = yaml.safe_load(charmcraft_path.read_text())["name"]
         if layer_path.exists() and not charmcraft_path.exists():
             # Handle older, reactive framework charms.
             # if a charmcraft.yaml file isn't defined for it
