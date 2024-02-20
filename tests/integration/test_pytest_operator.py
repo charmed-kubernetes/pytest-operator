@@ -115,6 +115,14 @@ def test_tmp_path(ops_test):
     assert ops_test.tmp_path.relative_to(tox_env_dir)
 
 
+async def test_tmp_path_nonpath_chars(ops_test):
+    model_alias = f"user{os.sep}name"
+    new_model = await ops_test.track_model(model_alias)
+    with ops_test.model_context(model_alias):
+        assert os.sep not in ops_test.tmp_path
+        await ops_test.forget_model(model_alias)
+
+
 async def test_run(ops_test):
     assert await ops_test.run("/bin/true") == (0, "", "")
     assert await ops_test.run("/bin/false") == (1, "", "")

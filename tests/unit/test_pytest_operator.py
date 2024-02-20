@@ -60,6 +60,24 @@ def test_tmp_path_without_tox(request, pytester):
     result.assert_outcomes(passed=1)
 
 
+@patch.object(plugin.OpsTest, "default_model_name", "user/model")
+@patch.object(plugin.OpsTest, "_setup_model", AsyncMock())
+@patch.object(plugin.OpsTest, "_cleanup_models", AsyncMock())
+def test_tmp_path_with_nonpath_chars(pytester):
+    pytester.makepyfile(
+        f"""
+        import os
+        from pathlib import Path
+
+        os.environ.update(**{ENV})
+        async def test_with_tox(ops_test):
+            assert ops_test.tmp_path.name == "user_model0"
+        """
+    )
+    result = pytester.runpytest()
+    result.assert_outcomes(passed=1)
+
+
 async def test_destructive_mode(monkeypatch, tmp_path_factory):
     patch = monkeypatch.setattr
     patch(plugin.os, "getgroups", mock_getgroups := Mock(return_value=[]))
