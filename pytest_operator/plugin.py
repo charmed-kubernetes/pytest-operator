@@ -510,18 +510,30 @@ class OpsTest:
         """Returns the dict of managed models by this fixture."""
         return {k: dataclasses.replace(v) for k, v in self._models.items()}
 
+    @staticmethod
+    def _model_name_to_filename(name: str):
+        """Sanitises a model name to one that is suitable for use as a component
+        of a filename."""
+        # Model names can only contain lowercase letters, digits, hyphens, and
+        # slashes, so most of the normalisation is already done, but we do a
+        # little bit of duplicated sanitisation here just to be certain.
+        # "letters" currently means ASCII letters, but may not in the future.
+        return "".join((c if c.isalnum() or c == "-" else "_") for c in name)
+
     @property
     def tmp_path(self) -> Path:
         tmp_path = self._global_tmp_path
         current_state = self.current_alias and self._models.get(self.current_alias)
         if current_state and current_state.tmp_path is None:
-            tmp_path = self._tmp_path_factory.mktemp(current_state.model_name)
+            tmp_path = self._tmp_path_factory.mktemp(
+                self._model_name_to_filename(current_state.model_name)
+            )
             current_state.tmp_path = tmp_path
         elif current_state and current_state.tmp_path:
             tmp_path = current_state.tmp_path
         elif not tmp_path:
             tmp_path = self._global_tmp_path = self._tmp_path_factory.mktemp(
-                self.default_model_name
+                self._model_name_to_filename(self.default_model_name)
             )
         log.info(f"Using tmp_path: {tmp_path}")
         return tmp_path
