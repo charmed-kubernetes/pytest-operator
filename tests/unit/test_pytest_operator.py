@@ -372,6 +372,7 @@ async def test_crash_dump_mode(
     mock_request = Mock(**{"module.__name__": "test"})
     mock_request.config.option.crash_dump = crash_dump
     mock_request.config.option.no_crash_dump = no_crash_dump
+    mock_request.config.option.crash_dump_args = ""
     mock_request.config.option.keep_models = keep_models
     ops_test = plugin.OpsTest(mock_request, tmp_path_factory)
     model = MagicMock()
@@ -396,12 +397,9 @@ async def test_crash_dump_mode(
         mock_run.assert_called_once_with(
             "juju-crashdump",
             "-s",
-            "-m",
-            "test:model",
-            "-a",
-            "debug-layer",
-            "-a",
-            "config",
+            "-m=test:model",
+            "-a=debug-layer",
+            "-a=config",
         )
     else:
         mock_run.assert_not_called()
@@ -413,6 +411,7 @@ def test_crash_dump_mode_invalid_input(monkeypatch, tmp_path_factory):
     patch(plugin.OpsTest, "run", AsyncMock(return_value=(0, "", "")))
     mock_request = Mock(**{"module.__name__": "test"})
     mock_request.config.option.crash_dump = "not-a-real-option"
+    mock_request.config.option.crash_dump_args = ""
     mock_request.config.option.no_crash_dump = False
     mock_request.config.option.keep_models = False
 
@@ -429,8 +428,10 @@ async def test_create_crash_dump(monkeypatch, tmp_path_factory):
 
     patch = monkeypatch.setattr
     patch(plugin.OpsTest, "run", mock_run)
+    mock_request = Mock(**{"module.__name__": "test"})
+    mock_request.config.option.crash_dump_args = ""
     patch(plugin, "log", mock_log := MagicMock())
-    ops_test = plugin.OpsTest(Mock(**{"module.__name__": "test"}), tmp_path_factory)
+    ops_test = plugin.OpsTest(mock_request, tmp_path_factory)
     await ops_test.create_crash_dump()
     mock_log.info.assert_any_call("juju-crashdump command was not found.")
 

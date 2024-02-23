@@ -105,6 +105,12 @@ def pytest_addoption(parser: Parser):
         "* never: never dumps",
     )
     parser.addoption(
+        "--crash-dump-args",
+        action="store",
+        default="",
+        help="If crashdump is run, run with provided extra arguments."
+    )
+    parser.addoption(
         "--crash-dump-output",
         action="store",
         default=None,
@@ -466,6 +472,7 @@ class OpsTest:
             no_crash_dump=request.config.option.no_crash_dump,
         )
         self.crash_dump_output = request.config.option.crash_dump_output
+        self.crash_dump_args = request.config.option.crash_dump_args
 
         # These will be set by _setup_model
         self.jujudata = None
@@ -791,18 +798,16 @@ class OpsTest:
 
     async def create_crash_dump(self) -> bool:
         """Run the juju-crashdump if it's possible."""
-        cmd = shlex.split(
-            f"juju-crashdump -s -m {self.model_full_name} -a debug-layer -a config"
-        )
-
+        args = ["-s", f"-m={self.model_full_name}", "-a=debug-layer", "-a=config"]
         output_directory = self.crash_dump_output
         if output_directory:
             log.debug("juju-crashdump will use output dir `%s`", output_directory)
-            cmd.append("-o")
-            cmd.append(output_directory)
+            args.append(f"-o={output_directory}")
 
+        user_args = self.crash_dump_args.split()
+        cmd = ["juju-crashdump"] + args + user_args
         try:
-            return_code, stdout, stderr = await self.run(*cmd)
+            return_code, _, __ = await self.run(*cmd)
             log.info("juju-crashdump finished [%s]", return_code)
             return True
         except FileNotFoundError:
