@@ -61,6 +61,14 @@ Sets whether to output a juju-crashdump after tests.  Options are:
 * legacy: (DEFAULT) dumps after a failed test if '--keep-models' is False
 * never: never dumps
 
+### `--crash-dump-args`
+
+Sets extra crashdump arguments if running crashdump
+* default arguments are not revokable
+* arguments will appear after the default arguments
+* arguments are shlex delimited
+
+
 ### `--crash-dump-output`
 
 Path to the directory where the `juju-crashdump` output will be stored. The default is
