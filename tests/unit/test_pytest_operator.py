@@ -372,7 +372,7 @@ async def test_crash_dump_mode(
     mock_request = Mock(**{"module.__name__": "test"})
     mock_request.config.option.crash_dump = crash_dump
     mock_request.config.option.no_crash_dump = no_crash_dump
-    mock_request.config.option.crash_dump_args = ""
+    mock_request.config.option.crash_dump_args = "-c --bug=1234567"
     mock_request.config.option.keep_models = keep_models
     ops_test = plugin.OpsTest(mock_request, tmp_path_factory)
     model = MagicMock()
@@ -400,6 +400,8 @@ async def test_crash_dump_mode(
             "-m=test:model",
             "-a=debug-layer",
             "-a=config",
+            "-c",
+            "--bug=1234567",
         )
     else:
         mock_run.assert_not_called()

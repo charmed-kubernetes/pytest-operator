@@ -108,7 +108,7 @@ def pytest_addoption(parser: Parser):
         "--crash-dump-args",
         action="store",
         default="",
-        help="If crashdump is run, run with provided extra arguments."
+        help="If crashdump is run, run with provided extra arguments.",
     )
     parser.addoption(
         "--crash-dump-output",
@@ -804,7 +804,7 @@ class OpsTest:
             log.debug("juju-crashdump will use output dir `%s`", output_directory)
             args.append(f"-o={output_directory}")
 
-        user_args = self.crash_dump_args.split()
+        user_args = shlex.split(self.crash_dump_args)
         cmd = ["juju-crashdump"] + args + user_args
         try:
             return_code, _, __ = await self.run(*cmd)
