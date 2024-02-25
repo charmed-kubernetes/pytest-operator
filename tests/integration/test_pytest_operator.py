@@ -119,7 +119,7 @@ async def test_tmp_path_nonpath_chars(ops_test):
     model_alias = f"user{os.sep}name"
     await ops_test.track_model(model_alias)
     with ops_test.model_context(model_alias):
-        assert os.sep not in ops_test.tmp_path
+        assert os.sep not in str(ops_test.tmp_path)
         await ops_test.forget_model(model_alias)
 
 
