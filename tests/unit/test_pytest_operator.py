@@ -560,7 +560,7 @@ async def test_fixture_cleanup_multi_model(
         (True, False, True),
         (True, plugin.OpsTest.ModelKeep.ALWAYS, True),
         (True, plugin.OpsTest.ModelKeep.NEVER, False),
-        (True, plugin.OpsTest.ModelKeep.IF_EXISTS, False),
+        (True, plugin.OpsTest.ModelKeep.IF_EXISTS, True),
         (True, "ALWAYS", True),
     ],
 )
@@ -579,7 +579,7 @@ async def test_model_keep_options(
     with ops_test.model_context("secondary"):
         assert (
             ops_test.keep_model is expected
-        ), f"{ops_test.model_name} should follow configured keep"
+        ), f"{ops_test.model_full_name} should follow configured keep"
 
 
 @patch("pytest_operator.plugin.OpsTest.default_model_name", new_callable=PropertyMock)

@@ -800,7 +800,7 @@ class OpsTest:
             keep = OpsTest.ModelKeep(keep.lower())
         if isinstance(keep, OpsTest.ModelKeep):
             if keep is OpsTest.ModelKeep.IF_EXISTS:
-                keep_val = bool(use_existing)
+                keep_val = self._init_keep_model or bool(use_existing)
             elif keep is OpsTest.ModelKeep.ALWAYS:
                 keep_val = True
             elif keep is OpsTest.ModelKeep.NEVER:
