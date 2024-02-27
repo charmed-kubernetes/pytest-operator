@@ -48,6 +48,7 @@ jobs:
       run: |
         mkdir -p tmp/
         mv $HOME/.local/state/charmcraft/log/* tmp/ | true
+        cp ${GITHUB_WORKSPACE}/pytest-operator/pytest-operator/.tox/integration*/tmp/*.charm tmp/ | true
 
     - name: Upload debug artifacts
       if: ${{ failure() }}
@@ -65,7 +66,7 @@ jobs:
         juju: ['3.1', '3.3']
     steps:
     - name: Check out code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Setup Python
       uses: actions/setup-python@v4
@@ -86,10 +87,11 @@ jobs:
       run: |
         mkdir -p tmp/
         mv $HOME/.local/state/charmcraft/log/* tmp/ | true
+        cp ${GITHUB_WORKSPACE}/pytest-operator/pytest-operator/.tox/integration*/tmp/*.charm tmp/ | true
 
     - name: Upload debug artifacts
       if: ${{ failure() }}
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: test-run-artifacts
         path: tmp
