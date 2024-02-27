@@ -18,7 +18,7 @@ jobs:
     needs:
       - call-inclusive-naming-check
 
-  integration-test-3-0:
+  integration-test-2-9:
     name: Integration test with juju
     runs-on: ubuntu-22.04
     timeout-minutes: 40
@@ -37,6 +37,7 @@ jobs:
     - name: Setup operator test environment
       uses: charmed-kubernetes/actions-operator@main
       with:
+        charm-channel: 3.x/stable
         juju-channel: ${{ matrix.juju }}/stable
 
     - name: Run integration tests
@@ -61,7 +62,7 @@ jobs:
     timeout-minutes: 40
     strategy:
       matrix:
-        juju: ['3.1', '3.2']
+        juju: ['3.1', '3.3']
     steps:
     - name: Check out code
       uses: actions/checkout@v3
@@ -74,6 +75,7 @@ jobs:
     - name: Setup operator test environment
       uses: charmed-kubernetes/actions-operator@main
       with:
+        charm-channel: 3.x/stable
         juju-channel: ${{ matrix.juju }}/stable
 
     - name: Run integration tests
