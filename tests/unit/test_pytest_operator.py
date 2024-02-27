@@ -475,7 +475,7 @@ def test_no_deploy_mode(pytester):
     result.assert_outcomes(passed=2, skipped=1)
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def mock_juju():
     juju = SimpleNamespace()
     with patch("pytest_operator.plugin.Model", autospec=True) as MockModel, patch(
@@ -527,7 +527,7 @@ async def test_fixture_set_up_existing_model(
 @patch("pytest_operator.plugin.OpsTest.forget_model")
 @patch("pytest_operator.plugin.OpsTest.run")
 async def test_fixture_cleanup_multi_model(
-    mock_run, mock_forget_model, mock_juju, setup_request, tmp_path_factory
+    mock_run, mock_forget_model, setup_request, tmp_path_factory
 ):
     ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
     await ops_test._setup_model()
@@ -544,6 +544,8 @@ async def test_fixture_cleanup_multi_model(
     )
 
 
+@patch("pytest_operator.plugin.OpsTest.forget_model", AsyncMock())
+@patch("pytest_operator.plugin.OpsTest.run", AsyncMock())
 @pytest.mark.parametrize(
     "global_flag, keep, expected",
     [
