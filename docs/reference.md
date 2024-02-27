@@ -144,6 +144,36 @@ subsequent refresh of the charm.
 
 ### Attributes
 
+#### `ModelKeep`
+
+Enum used to select the appropriate behavior for cleaning up models created or used by ops_test.
+
+* `NEVER`
+
+  This gives pytest-operator the duty to delete this model
+  at the end of the test regardless of any outcome.
+* `ALWAYS`
+
+  This gives pytest-operator the duty to keep this model
+  at the end of the test regardless of any outcome.
+* `IF_EXISTS`
+
+  If the model already exists before opstest encounters it,
+  follow the rules defined by `track_model.use_existing`
+  * respects the --keep-models flag, otherwise
+  * newly created models mapped to ModelKeep.NEVER
+  * existing models mapped to ModelKeep.ALWAYS
+
+Example Usage:
+  ```python
+  # create a model that will always be removed
+  # Regardless of the --keep-models flag
+  await ops_test.track_model(
+    "secondary",
+    keep=ops_test.ModelKeep.ALWAYS
+  )
+  ```
+
 #### `model`
 
 The current aliased python-libjuju `Model` instance for the test.
@@ -338,7 +368,7 @@ applied if the marked test method fails or errors.
 Log a summary of the status of the model. This is automatically called before the model
 is cleaned up.
 
-#### `async def track_model(self, alias: str, model_name: Optional[str] = None, cloud_name: Optional[str] = None, use_existing: Optional[bool] = None, keep: Optional[bool] = None, **kwargs,) -> Model`
+#### `async def track_model(self, alias: str, model_name: Optional[str] = None, cloud_name: Optional[str] = None, use_existing: Optional[bool] = None, keep: Optional[ModelKeep, str, bool, None] = ModelKeep.IF_EXISTS, **kwargs,) -> Model`
 
 Indicate to `ops_test` to track a new model which is automatically created in juju or an existing juju model referenced by model_name.
 This allows `ops_test` to track multiple models on various clouds by a unique alias name.
@@ -352,6 +382,12 @@ This allows `ops_test` to track multiple models on various clouds by a unique al
   * `False`: `ops_test` creates a new model
   * `True`: `ops_test` won't create a new model, but will connect to an existing model by `model_name`
 * `keep`:
+  * `ModelKeep`  : See docs for the `ModelKeep` enum
+  * `str`        : mapped to `ModelKeep` values
+  * `None`       : Same as `ModelKeep.IF_EXISTS`
+  * `True`       : Same as `ModelKeep.ALWAYS`
+  * `False`      : Same as `ModelKeep.NEVER`, but respects `--keep-models` flag
+
   * `None` (default): inherit boolean value of `use_existing`
   * `False`: `ops_test` will destroy at the end of testing
   * `True`: `ops_test` won't destroy at the end of testing
