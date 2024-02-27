@@ -373,7 +373,7 @@ async def test_crash_dump_mode(
     mock_request.config.option.crash_dump = crash_dump
     mock_request.config.option.no_crash_dump = no_crash_dump
     mock_request.config.option.crash_dump_args = "-c --bug=1234567"
-    mock_request.config.option.keep_models = keep_models
+    mock_request.config.option.keep_models = False
     ops_test = plugin.OpsTest(mock_request, tmp_path_factory)
     model = MagicMock()
     model.machines.values.return_value = []
@@ -382,7 +382,7 @@ async def test_crash_dump_mode(
     ops_test._current_alias = "main"
     ops_test._models = {
         ops_test.current_alias: plugin.ModelState(
-            model, False, "test", "local", "model"
+            model, keep_models, "test", "local", "model"
         )
     }
     ops_test.crash_dump_output = None
@@ -475,7 +475,7 @@ def test_no_deploy_mode(pytester):
     result.assert_outcomes(passed=2, skipped=1)
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def mock_juju():
     juju = SimpleNamespace()
     with patch("pytest_operator.plugin.Model", autospec=True) as MockModel, patch(
@@ -527,7 +527,7 @@ async def test_fixture_set_up_existing_model(
 @patch("pytest_operator.plugin.OpsTest.forget_model")
 @patch("pytest_operator.plugin.OpsTest.run")
 async def test_fixture_cleanup_multi_model(
-    mock_run, mock_forget_model, mock_juju, setup_request, tmp_path_factory
+    mock_run, mock_forget_model, setup_request, tmp_path_factory
 ):
     ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
     await ops_test._setup_model()
@@ -542,6 +542,44 @@ async def test_fixture_cleanup_multi_model(
         ],
         any_order=False,
     )
+
+
+@patch("pytest_operator.plugin.OpsTest.forget_model", AsyncMock())
+@patch("pytest_operator.plugin.OpsTest.run", AsyncMock())
+@pytest.mark.parametrize(
+    "global_flag, keep, expected",
+    [
+        (None, None, False),
+        (None, True, True),
+        (None, False, False),
+        (None, plugin.OpsTest.ModelKeep.ALWAYS, True),
+        (None, plugin.OpsTest.ModelKeep.NEVER, False),
+        (None, plugin.OpsTest.ModelKeep.IF_EXISTS, False),
+        (True, None, True),
+        (True, True, True),
+        (True, False, True),
+        (True, plugin.OpsTest.ModelKeep.ALWAYS, True),
+        (True, plugin.OpsTest.ModelKeep.NEVER, False),
+        (True, plugin.OpsTest.ModelKeep.IF_EXISTS, True),
+        (True, "ALWAYS", True),
+    ],
+)
+async def test_model_keep_options(
+    global_flag, keep, expected, setup_request, tmp_path_factory
+):
+    setup_request.config.option.keep_models = global_flag
+    ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
+    await ops_test._setup_model()
+    with ops_test.model_context("main"):
+        assert ops_test.keep_model is bool(
+            global_flag
+        ), "main model should follow global flag"
+
+    await ops_test.track_model("secondary", keep=keep)
+    with ops_test.model_context("secondary"):
+        assert (
+            ops_test.keep_model is expected
+        ), f"{ops_test.model_full_name} should follow configured keep"
 
 
 @patch("pytest_operator.plugin.OpsTest.default_model_name", new_callable=PropertyMock)

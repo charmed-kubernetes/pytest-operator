@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import dataclasses
+import enum
 import grp
 import inspect
 import json
@@ -78,7 +79,7 @@ def pytest_addoption(parser: Parser):
     parser.addoption(
         "--keep-models",
         action="store_true",
-        help="Keep any automatically created models",
+        help="Keep models handled by opstest, can be overriden in track_model",
     )
     parser.addoption(
         "--destructive-mode",
@@ -420,6 +421,33 @@ Timeout = TypeVar("Timeout", float, int)
 class OpsTest:
     """Utility class for testing Operator Charms."""
 
+    class ModelKeep(enum.Enum):
+        """
+        Used to select the appropriate behavior for cleaning up models
+        created or used by ops_test.
+        """
+
+        NEVER = "never"
+        """
+        This gives pytest-operator the duty to delete this model
+        at the end of the test regardless of any outcome.
+        """
+
+        ALWAYS = "always"
+        """
+        This gives pytest-operator the duty to keep this model
+        at the end of the test regardless of any outcome.
+        """
+
+        IF_EXISTS = "if-exists"
+        """
+        If the model already exists before ops_test encounters it,
+        follow the rules defined by `track_model.use_existing`
+           * respects the --keep-models flag, otherwise
+           * newly created models mapped to ModelKeep.NEVER
+           * existing models mapped to ModelKeep.ALWAYS
+        """
+
     # store instance, so we can tell if it's been used yet
     _instance: Optional["OpsTest"] = None
 
@@ -457,10 +485,10 @@ class OpsTest:
         self.destructive_mode = request.config.option.destructive_mode
 
         # Config options to determine first model specs used by tests
-        self._orig_model_alias = request.config.option.model_alias
-        self._init_cloud_name = request.config.option.cloud
-        self._init_model_name = request.config.option.model
-        self._init_keep_model = request.config.option.keep_models
+        self._orig_model_alias: Optional[str] = request.config.option.model_alias
+        self._init_cloud_name: Optional[str] = request.config.option.cloud
+        self._init_model_name: Optional[str] = request.config.option.model
+        self._init_keep_model: bool = request.config.option.keep_models
 
         # These may be modified by _setup_model
         self.controller_name = request.config.option.controller
@@ -566,10 +594,8 @@ class OpsTest:
     @property
     def keep_model(self) -> bool:
         """Represents whether the current model should be kept after tests."""
-        if self._init_keep_model:
-            return True
         current_state = self.current_alias and self._models.get(self.current_alias)
-        return current_state.keep if current_state else False
+        return current_state.keep if current_state else self._init_keep_model
 
     def _generate_model_name(self) -> str:
         module_name = self.request.module.__name__.rpartition(".")[-1]
@@ -730,7 +756,7 @@ class OpsTest:
         model_name: Optional[str] = None,
         cloud_name: Optional[str] = None,
         use_existing: Optional[bool] = None,
-        keep: Optional[bool] = None,
+        keep: Union[ModelKeep, str, bool, None] = ModelKeep.IF_EXISTS,
         **kwargs,
     ) -> Model:
         """
@@ -746,11 +772,12 @@ class OpsTest:
                None:  True if model_name exists on this controller
                False: create a new model and keep=False, unless keep=True explicitly set
                True:  connect to a model and keep=True, unless keep=False explicitly set
-        @param Optional[bool] keep:
-               None:  follows the value of use_existing
-               False: tracked model is destroyed at tests end
-               True:  tracked model remains once tests complete
-               --keep-models flag will override this options
+        @param Optional[ModelKeep, str, bool, None] keep:
+               ModelKeep  : See docs for the enum
+               str        : mapped to ModelKeep values
+               None       : Same as ModelKeep.IF_EXISTS
+               True       : Same as ModelKeep.ALWAYS
+               False      : Same as ModelKeep.NEVER, but respects keep-models flag
 
         Common Examples:
         ----------------------------------
@@ -768,19 +795,35 @@ class OpsTest:
         if model_name and use_existing is None:
             use_existing = await self._model_exists(model_name)
 
-        keep = bool(use_existing) if keep is None else keep
+        keep_val: bool = False
+        if isinstance(keep, str):
+            keep = OpsTest.ModelKeep(keep.lower())
+        if isinstance(keep, OpsTest.ModelKeep):
+            if keep is OpsTest.ModelKeep.IF_EXISTS:
+                keep_val = self._init_keep_model or bool(use_existing)
+            elif keep is OpsTest.ModelKeep.ALWAYS:
+                keep_val = True
+            elif keep is OpsTest.ModelKeep.NEVER:
+                keep_val = False
+        elif isinstance(keep, bool):
+            keep_val = self._init_keep_model or keep
+        elif keep is None:
+            keep_val = self._init_keep_model or bool(use_existing)
+
         if use_existing:
             if not model_name:
                 raise NotImplementedError(
                     "Cannot use_existing model if model_name is unspecified"
                 )
             model_state = await self._connect_to_model(
-                self.controller_name, model_name, keep
+                self.controller_name, model_name, keep_val
             )
         else:
             cloud_name = cloud_name or self.cloud_name
             model_name = model_name or self._generate_model_name()
-            model_state = await self._add_model(cloud_name, model_name, keep, **kwargs)
+            model_state = await self._add_model(
+                cloud_name, model_name, keep_val, **kwargs
+            )
         self._models[alias] = model_state
         return model_state.model
 
