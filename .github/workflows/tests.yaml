@@ -48,13 +48,13 @@ jobs:
       run: |
         mkdir -p tmp/
         mv $HOME/.local/state/charmcraft/log/* tmp/ | true
-        cp ${GITHUB_WORKSPACE}/pytest-operator/pytest-operator/.tox/integration*/tmp/*.charm tmp/ | true
+        cp ${GITHUB_WORKSPACE}/.tox/integration*/tmp/*.charm tmp/ | true
 
     - name: Upload debug artifacts
       if: ${{ failure() }}
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
-        name: test-run-artifacts
+        name: test-run-artifacts-${{ matrix.juju }}
         path: tmp
 
   integration-test:
@@ -87,11 +87,12 @@ jobs:
       run: |
         mkdir -p tmp/
         mv $HOME/.local/state/charmcraft/log/* tmp/ | true
-        cp ${GITHUB_WORKSPACE}/pytest-operator/pytest-operator/.tox/integration*/tmp/*.charm tmp/ | true
+        shopt -s globstar
+        cp ${GITHUB_WORKSPACE}/.tox/integration*/tmp/**/*.charm tmp/ | true
 
     - name: Upload debug artifacts
       if: ${{ failure() }}
       uses: actions/upload-artifact@v4
       with:
-        name: test-run-artifacts
+        name: test-run-artifacts-${{ matrix.juju }}
         path: tmp
