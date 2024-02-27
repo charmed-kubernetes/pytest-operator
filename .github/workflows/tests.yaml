@@ -48,6 +48,7 @@ jobs:
       run: |
         mkdir -p tmp/
         mv $HOME/.local/state/charmcraft/log/* tmp/ | true
+        shopt -s globstar
         cp ${GITHUB_WORKSPACE}/.tox/integration*/tmp/*.charm tmp/ | true
 
     - name: Upload debug artifacts
