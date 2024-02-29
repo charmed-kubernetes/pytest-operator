@@ -8,3 +8,4 @@ dist/
 *.orig
 report
 .coverage
+juju-crashdump*
