@@ -916,6 +916,9 @@ class OpsTest:
         if timeout is None and model_state.timeout:
             timeout = model_state.timeout
 
+        async def is_model_alive():
+            return model_name in await self._controller.list_models()
+
         with self.model_context(alias) as model:
             await self.log_model()
             model_name = model.info.name
@@ -931,15 +934,12 @@ class OpsTest:
                     destroy_storage=destroy_storage,
                     max_wait=timeout,
                 )
+                if timeout and await is_model_alive():
+                    log.warning("Waiting for model %s to die...", model_name)
+                    while await is_model_alive():
+                        asyncio.sleep(5)
+
             await model.disconnect()
-
-        async def model_alive():
-            return model_name in await self._controller.list_models()
-
-        if timeout and await model_alive():
-            log.warning("Waiting for model %s to leave...", model_name)
-            while await model_alive():
-                asyncio.sleep(5)
 
         # stop managing this model now
         log.info(f"Forgetting model {alias}...")
