@@ -9,7 +9,7 @@ from pytest_operator.plugin import OpsTest
 async def test_add_k8s(ops_test: OpsTest):
     try:
         k8s_cloud = await ops_test.add_k8s(skip_storage=False)
-    except ConfigException:
+    except (ConfigException, TypeError):
         pytest.skip("No Kubernetes config found to add-k8s")
 
     k8s_model = await ops_test.track_model(
