@@ -404,7 +404,7 @@ class ModelInUseError(Exception):
     """Raise when trying to add a model alias which already exists."""
 
 
-BundleOpt = TypeVar("BundleOpt", str, Path, "OpsTest.Bundle")
+BundleOpt = Union[str, Path, "OpsTest.Bundle"]
 Timeout = TypeVar("Timeout", float, int)
 
 
