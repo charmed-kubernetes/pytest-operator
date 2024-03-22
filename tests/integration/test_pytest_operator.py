@@ -91,6 +91,9 @@ class TestPlugin:
         }
 
         # track the main model with a second alias, don't do this other than testing
+        # this will forget the duplicate without resetting/deleting the main model
+        # because "duplicate" will be in "keep_model" mode since ops_tests believes
+        # it's an existing model.
         model_name = prior_model.info.name
         duplicate = await ops_test.track_model("duplicate", model_name=model_name)
         assert duplicate.info.uuid == prior_model.info.uuid
