@@ -483,3 +483,23 @@ Once the model context closes, `ops_test` returns the current_alias back to the 
 assuming that it references a model alias which hasn't been forgotten.
 
 [juju-bundle]: https://snapcraft.io/juju-bundle
+
+
+#### `def add_k8s(...)`
+
+Supports adding a k8s cloud to the connected juju controller. This can be useful for testing cross-model relations between a machine model and a kubernetes models.
+
+For example, assuming one has access to a `kubeconfig` file, use the kubernetes client to load that `kubeconfig` and pass to ops_test via the `add_k8s` method.  After this, we can create a new model on that k8s cloud and test integrations between models. 
+
+
+```python
+    kubeconfig_path = ops_test.tmp_path / "kubeconfig"
+    kubeconfig_path.write_text(config)
+    config = type.__call__(Configuration)
+    k8s_config.load_config(client_configuration=config, config_file=str(kubeconfig_path))
+
+    k8s_cloud = await ops_test.add_k8s(kubeconfig=config, skip_storage=False)
+    k8s_model = await ops_test.track_model(
+        "cos", cloud_name=k8s_cloud, keep=ops_test.ModelKeep.NEVER
+    )
+```
