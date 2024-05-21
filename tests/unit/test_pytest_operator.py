@@ -382,7 +382,7 @@ async def test_crash_dump_mode(
     ops_test._current_alias = "main"
     ops_test._models = {
         ops_test.current_alias: plugin.ModelState(
-            model, keep_models, "test", "local", "model"
+            model, keep_models, False, "test", "local", "model"
         )
     }
     ops_test.crash_dump_output = None
@@ -503,6 +503,7 @@ def setup_request(request, mock_juju):
     mock_request.config.option.model_alias = "main"
     mock_request.config.option.model_config = None
     mock_request.config.option.keep_models = False
+    mock_request.config.option.destroy_storage = False
     yield mock_request
 
 
@@ -521,6 +522,9 @@ async def test_fixture_set_up_existing_model(
     assert ops_test.cloud_name is None
     assert ops_test.model_name == "this-model"
     assert ops_test.keep_model is True, "Model should be kept if it already exists"
+    assert (
+        ops_test.destroy_storage is False
+    ), "Storage should not be destroyed by default"
     assert len(ops_test.models) == 1
 
 
@@ -580,6 +584,37 @@ async def test_model_keep_options(
         assert (
             ops_test.keep_model is expected
         ), f"{ops_test.model_full_name} should follow configured keep"
+
+
+@patch("pytest_operator.plugin.OpsTest.forget_model", AsyncMock())
+@patch("pytest_operator.plugin.OpsTest.run", AsyncMock())
+@pytest.mark.parametrize(
+    "global_flag, destroy_storage, expected",
+    [
+        (False, None, False),
+        (False, True, True),
+        (False, False, False),
+        (True, None, True),
+        (True, True, True),
+        (True, False, False),
+    ],
+)
+async def test_destroy_storage_options(
+    global_flag, destroy_storage, expected, setup_request, tmp_path_factory
+):
+    setup_request.config.option.destroy_storage = global_flag
+    ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
+    await ops_test._setup_model()
+    with ops_test.model_context("main"):
+        assert ops_test.destroy_storage is bool(
+            global_flag
+        ), "main model should follow global flag"
+
+    await ops_test.track_model("secondary", destroy_storage=destroy_storage)
+    with ops_test.model_context("secondary"):
+        assert (
+            ops_test.destroy_storage is expected
+        ), f"{ops_test.model_full_name} should follow configured destroy_storage"
 
 
 @patch("pytest_operator.plugin.OpsTest.default_model_name", new_callable=PropertyMock)
