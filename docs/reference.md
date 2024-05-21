@@ -28,6 +28,10 @@ on the specified controller.
 
 Keep any automatically created models.
 
+### `--destroy-storage`
+
+Destroy storage allocated on the created models.
+
 ### `--model-config`
 
 Path to a yaml file which will be applied to the model on creation.
@@ -368,7 +372,7 @@ applied if the marked test method fails or errors.
 Log a summary of the status of the model. This is automatically called before the model
 is cleaned up.
 
-#### `async def track_model(self, alias: str, model_name: Optional[str] = None, cloud_name: Optional[str] = None, use_existing: Optional[bool] = None, keep: Optional[ModelKeep, str, bool, None] = ModelKeep.IF_EXISTS, **kwargs,) -> Model`
+#### `async def track_model(self, alias: str, model_name: Optional[str] = None, cloud_name: Optional[str] = None, use_existing: Optional[bool] = None, keep: Optional[ModelKeep, str, bool, None] = ModelKeep.IF_EXISTS, destroy_storage: bool = False, **kwargs,) -> Model`
 
 Indicate to `ops_test` to track a new model which is automatically created in juju or an existing juju model referenced by model_name.
 This allows `ops_test` to track multiple models on various clouds by a unique alias name.
@@ -391,6 +395,7 @@ This allows `ops_test` to track multiple models on various clouds by a unique al
   * `None` (default): inherit boolean value of `use_existing`
   * `False`: `ops_test` will destroy at the end of testing
   * `True`: `ops_test` won't destroy at the end of testing
+* `destroy_storage`: Wether the storage should be destroyed with the model, defaults to `False`.
 
 ##### Examples:
 
