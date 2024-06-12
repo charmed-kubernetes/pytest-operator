@@ -53,6 +53,8 @@ from juju.exceptions import DeadEntityException
 from juju.errors import JujuError
 from juju.model import Model, Controller, websockets
 
+from pytest_operator.cos import deploy_and_assert_grafana_agent
+
 log = logging.getLogger(__name__)
 
 
@@ -1666,3 +1668,19 @@ class OpsTest:
         log.info(f"Forgetting cloud: {cloud_name}...")
         await self._controller.remove_cloud(cloud_name)
         del self._clouds[cloud_name]
+
+    async def deploy_and_assert_grafana_agent(
+        self,
+        app: str,
+        channel: str = "latest/stable",
+        metrics: bool = False,
+        logging: bool = False,
+        dashboard: bool = False,
+    ) -> None:
+        """Deploy grafana-agent-k8s and add relate it with app.
+
+        Helper function to deploy and relate grafana-agent-k8s with provided app.
+        """
+        await deploy_and_assert_grafana_agent(
+            self.model, app, channel, metrics, logging, dashboard
+        )
