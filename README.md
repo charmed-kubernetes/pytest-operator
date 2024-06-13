@@ -84,4 +84,4 @@ async def test_build_and_deploy(ops_test):
 
 ## Reference
 
-More details can be found in [the reference docs](docs/reference.md).
+More details can be found in [the reference docs](https://github.com/charmed-kubernetes/pytest-operator/blob/main/docs/reference.md).
