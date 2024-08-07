@@ -18,6 +18,7 @@ setup(
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
     ],
     license="MIT license",
     include_package_data=True,
@@ -26,7 +27,7 @@ setup(
     packages=find_packages(include=["pytest_operator"]),
     package_data={'pytest_operator': ['py.typed']},
     url="https://github.com/charmed-kubernetes/pytest-operator",
-    version="0.35.0",
+    version="0.36.0",
     zip_safe=True,
     install_requires=[
         "ipdb",
