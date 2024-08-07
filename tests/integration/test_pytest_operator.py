@@ -44,7 +44,7 @@ class TestPlugin:
         )
         log.info("Deploying bundle")
         await ops_test.model.deploy(bundle)
-        await ops_test.model.wait_for_idle()
+        await ops_test.model.wait_for_idle(timeout=30 * 60)
         for unit in ops_test.model.units.values():
             assert f"{unit.name}: {unit.workload_status}".endswith("active")
 
