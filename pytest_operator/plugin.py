@@ -9,14 +9,14 @@ import json
 import logging
 import os
 import re
-import shutil
 import shlex
+import shutil
 import subprocess
 import sys
 import textwrap
 from collections import OrderedDict
-from functools import cached_property
 from fnmatch import fnmatch
+from functools import cached_property
 from pathlib import Path
 from random import choices
 from string import ascii_lowercase, digits, hexdigits
@@ -26,16 +26,16 @@ from typing import (
     Iterable,
     List,
     Literal,
-    MutableMapping,
     Mapping,
+    MutableMapping,
     Optional,
-    TypeVar,
     Tuple,
+    TypeVar,
     Union,
 )
-from urllib.request import urlretrieve, urlopen
-from urllib.parse import urlencode
 from urllib.error import HTTPError
+from urllib.parse import urlencode
+from urllib.request import urlopen, urlretrieve
 from zipfile import Path as ZipPath
 
 import jinja2
@@ -45,13 +45,13 @@ import pytest_asyncio.plugin
 import yaml
 from _pytest.config import Config
 from _pytest.config.argparsing import Parser
-from kubernetes import client as k8s_client
-from kubernetes.client import Configuration as K8sConfiguration
 from juju.client import client
 from juju.client.jujudata import FileJujuData
-from juju.exceptions import DeadEntityException
 from juju.errors import JujuError
-from juju.model import Model, Controller, websockets
+from juju.exceptions import DeadEntityException
+from juju.model import Controller, Model, websockets
+from kubernetes import client as k8s_client
+from kubernetes.client import Configuration as K8sConfiguration
 
 log = logging.getLogger(__name__)
 
@@ -85,6 +85,12 @@ def pytest_addoption(parser: Parser):
         "--keep-models",
         action="store_true",
         help="Keep models handled by opstest, can be overriden in track_model",
+    )
+    parser.addoption(
+        "--destroy-storage",
+        action="store_true",
+        help="Destroy storage created in models handled by opstest,"
+        "can be overriden in track_model",
     )
     parser.addoption(
         "--destructive-mode",
@@ -412,6 +418,7 @@ Timeout = TypeVar("Timeout", float, int)
 class ModelState:
     model: Model
     keep: bool
+    destroy_storage: bool
     controller_name: str
     cloud_name: Optional[str]
     model_name: str
@@ -502,6 +509,7 @@ class OpsTest:
         self._init_cloud_name: Optional[str] = request.config.option.cloud
         self._init_model_name: Optional[str] = request.config.option.model
         self._init_keep_model: bool = request.config.option.keep_models
+        self._init_destroy_storage: bool = request.config.option.destroy_storage
 
         # These may be modified by _setup_model
         self.controller_name = request.config.option.controller
@@ -611,6 +619,18 @@ class OpsTest:
         current_state = self.current_alias and self._models.get(self.current_alias)
         return current_state.keep if current_state else self._init_keep_model
 
+    @property
+    def destroy_storage(self) -> bool:
+        """
+        Represents whether the current model storage should be destroyed after tests.
+        """
+        current_state = self.current_alias and self._models.get(self.current_alias)
+        return (
+            current_state.destroy_storage
+            if current_state
+            else self._init_destroy_storage
+        )
+
     def _generate_name(self, kind: str) -> str:
         module_name = self.request.module.__name__.rpartition(".")[-1]
         suffix = "".join(choices(ascii_lowercase + digits, k=4))
@@ -679,7 +699,9 @@ class OpsTest:
 
         return await self.run("juju", *args, **kwargs)
 
-    async def _add_model(self, cloud_name, model_name, keep=False, **kwargs):
+    async def _add_model(
+        self, cloud_name, model_name, keep=False, destroy_storage=False, **kwargs
+    ):
         """
         Creates a model used by the test framework which would normally be destroyed
         after the tests are run in the module.
@@ -711,7 +733,13 @@ class OpsTest:
         # update the cache from the controller.
         await self.juju("models")
         state = ModelState(
-            model, keep, controller_name, cloud_name, model_name, timeout=timeout
+            model,
+            keep,
+            destroy_storage,
+            controller_name,
+            cloud_name,
+            model_name,
+            timeout=timeout,
         )
         state.config = await model.get_config()
         return state
@@ -724,13 +752,17 @@ class OpsTest:
         return model_name in all_models
 
     @staticmethod
-    async def _connect_to_model(controller_name, model_name, keep=True):
+    async def _connect_to_model(
+        controller_name, model_name, keep=True, destroy_storage=False
+    ):
         """
         Makes a reference to an existing model used by the test framework
         which will not be destroyed after the tests are run in the module.
         """
         model = Model()
-        state = ModelState(model, keep, controller_name, None, model_name)
+        state = ModelState(
+            model, keep, destroy_storage, controller_name, None, model_name
+        )
         log.info(
             "Connecting to existing model %s on unspecified cloud", state.full_name
         )
@@ -771,6 +803,7 @@ class OpsTest:
             model_name=self._init_model_name or self.default_model_name,
             cloud_name=self._init_cloud_name,
             keep=self._init_model_name is not None,
+            destroy_storage=self._init_destroy_storage,
             config=self.read_model_config(self._init_model_config),
         )
 
@@ -782,6 +815,7 @@ class OpsTest:
         model_name: Optional[str] = None,
         cloud_name: Optional[str] = None,
         use_existing: Optional[bool] = None,
+        destroy_storage: Optional[bool] = None,
         keep: Union[ModelKeep, str, bool, None] = ModelKeep.IF_EXISTS,
         **kwargs,
     ) -> Model:
@@ -794,6 +828,9 @@ class OpsTest:
                                          None will craft a unique name
         @param Optional[str] cloud_name: cloud name in which to add a new model,
                                          None will use current cloud
+        @param Optional[bool] destroy_storage: wether the storage should be destroyed
+                                               with the model, None defaults to the
+                                               pytest config flag `--destroy-storage`
         @param Optional[bool] use_existing:
                None:  True if model_name exists on this controller
                False: create a new model and keep=False, unless keep=True explicitly set
@@ -836,6 +873,10 @@ class OpsTest:
         elif keep is None:
             keep_val = self._init_keep_model or bool(use_existing)
 
+        destroy_storage_val = (
+            self._init_destroy_storage if destroy_storage is None else destroy_storage
+        )
+
         if use_existing:
             if not model_name:
                 raise NotImplementedError(
@@ -848,7 +889,7 @@ class OpsTest:
             cloud_name = cloud_name or self.cloud_name
             model_name = model_name or self._generate_name(kind="model")
             model_state = await self._add_model(
-                cloud_name, model_name, keep_val, **kwargs
+                cloud_name, model_name, keep_val, destroy_storage_val, **kwargs
             )
         self._models[alias] = model_state
         if ops_cloud := self._clouds.get(cloud_name):
@@ -889,8 +930,8 @@ class OpsTest:
         self,
         alias: Optional[str] = None,
         timeout: Optional[Timeout] = None,
+        destroy_storage: Optional[bool] = None,
         allow_failure: bool = True,
-        destroy_storage: bool = False,
     ):
         """
         Forget a model and wait for it to be removed from the controller.
@@ -930,6 +971,9 @@ class OpsTest:
 
             if not self.keep_model:
                 await self._reset(model, allow_failure, timeout=timeout)
+                destroy_storage = (
+                    self.destroy_storage if destroy_storage is None else destroy_storage
+                )
                 await self._controller.destroy_model(
                     model_name,
                     force=True,
