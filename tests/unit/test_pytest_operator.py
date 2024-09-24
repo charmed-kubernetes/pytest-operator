@@ -95,7 +95,7 @@ async def test_destructive_mode(monkeypatch, tmp_path_factory):
         # We didn't actually build it
         assert str(e).startswith("Failed to build charm")
     assert mock_run.called
-    assert mock_run.call_args[0] == ("sg", "lxd", "-c", "charmcraft pack")
+    assert mock_run.call_args[0] == ("sudo", "-g", "lxd", "-E", "charmcraft", "pack")
 
     mock_getgroups.return_value = [ANY]
     try:
@@ -644,7 +644,8 @@ async def test_fixture_set_up_automatic_model(
 @pytest.mark.parametrize("model_name", [None, "alt-model"])
 @pytest.mark.parametrize("cloud_name", [None, "alt-cloud"])
 @pytest.mark.parametrize(
-    "block_exception", [None, asyncio.TimeoutError(), ConnectionClosed(1, "test")]
+    "block_exception",
+    [None, asyncio.TimeoutError(), ConnectionClosed(1, "test", False)],
 )
 @patch("pytest_operator.plugin.OpsTest.juju", autospec=True)
 async def test_fixture_create_remove_model(
