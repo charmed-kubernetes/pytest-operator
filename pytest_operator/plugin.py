@@ -1105,7 +1105,6 @@ class OpsTest:
             cmd = ["charm", "build", "--charm-file"]
         else:
             # Handle newer, operator framework charms.
-            all_groups = {g.gr_name for g in grp.getgrall()}
             users_groups = {grp.getgrgid(g).gr_name for g in os.getgroups()}
             cmd = ["charmcraft", "pack"]
             if bases_index is not None:
@@ -1117,12 +1116,14 @@ class OpsTest:
                 cmd.append("--destructive-mode")
             elif "lxd" not in users_groups:
                 # building with lxd builder and user does't already have lxd group;
-                # make sure it's available and if so, try using `sg` to acquire it
+                # try to build with sudo -u <user> -E charmcraft pack
+
+                all_groups = {g.gr_name for g in grp.getgrall()}
                 assert "lxd" in all_groups, (
                     "Group 'lxd' required but not available; "
                     "ensure that lxd is available or use --destructive-mode"
                 )
-                cmd = ["sg", "lxd", "-c", " ".join(cmd)]
+                cmd = ["sudo", "-g", "lxd", "-E", *cmd]
 
         log.info(f"Building charm {charm_name}")
         start = timer()

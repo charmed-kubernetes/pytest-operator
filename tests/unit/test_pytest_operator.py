@@ -95,7 +95,7 @@ async def test_destructive_mode(monkeypatch, tmp_path_factory):
         # We didn't actually build it
         assert str(e).startswith("Failed to build charm")
     assert mock_run.called
-    assert mock_run.call_args[0] == ("sg", "lxd", "-c", "charmcraft pack")
+    assert mock_run.call_args[0] == ("sudo", "-g", "lxd", "-E", "charmcraft", "pack")
 
     mock_getgroups.return_value = [ANY]
     try:
