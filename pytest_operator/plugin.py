@@ -1075,13 +1075,24 @@ class OpsTest:
         verbosity: Optional[
             Literal["quiet", "brief", "verbose", "debug", "trace"]
         ] = None,
-    ) -> Optional[Path]:
+    ) -> Path:
         """Builds a single charm.
 
         This can handle charms using the older charms.reactive framework as
         well as charms written against the modern operator framework.
 
-        Returns a Path for the built charm file.
+        Args:
+            charm_path: Path to the base source of the charm.
+            bases_index: Index of `bases` configuration to build
+                         (see charmcraft pack help)
+            verbosity: Verbosity level for charmcraft pack.
+
+        Returns:
+            Returns a Path for the built charm file.
+
+        Raises:
+            RuntimeError: If the charm build fails.
+            FileNotFoundError: If no charm file is found after a successful build
         """
         charms_dst_dir = self.tmp_path / "charms"
         charms_dst_dir.mkdir(exist_ok=True)
@@ -1160,14 +1171,14 @@ class OpsTest:
 
         # If charmcraft.yaml has multiple bases
         # then multiple charms would be generated.
-        charm_file_dst = None
         for charm_file_src in charm_abs.glob(f"{charm_name}*.charm"):
             charm_file_dst = charms_dst_dir / charm_file_src.name
             charm_file_src.rename(charm_file_dst)
-
-        # Even though we may have multiple *.charm file,
-        # for backwards compatibility we can - only return one.
-        return charm_file_dst
+            # Even though we may have multiple *.charm file,
+            # for backwards compatibility we can - only return one.
+            return charm_file_dst
+        else:
+            FileNotFoundError(f"No such file in '{charm_path}/*.charm'")
 
     async def build_charms(self, *charm_paths) -> Mapping[str, Path]:
         """Builds one or more charms in parallel.
