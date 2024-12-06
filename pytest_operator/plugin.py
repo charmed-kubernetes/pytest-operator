@@ -47,7 +47,7 @@ import pytest_asyncio.plugin
 import yaml
 from _pytest.config import Config
 from _pytest.config.argparsing import Parser
-from juju.client import client, connection
+from juju.client import client
 from juju.client.jujudata import FileJujuData
 from juju.errors import JujuError
 from juju.exceptions import DeadEntityException
@@ -427,13 +427,10 @@ def _connect_kwds(request) -> Dict[str, Any]:
     """Create a dict of keyword arguments for connecting to a model."""
     kwds = {}
     if val := request.config.option.juju_max_frame_size:
-        if 0 < val <= connection.Connection.MAX_FRAME_SIZE:
+        if 0 < val:
             kwds["max_frame_size"] = val
         else:
-            raise ValueError(
-                f"max-frame-size must be positive int and less than or equal to "
-                f"{connection.Connection.MAX_FRAME_SIZE}"
-            )
+            raise ValueError(f"max-frame-size must be positive integer, not {val}")
     return kwds
 
 

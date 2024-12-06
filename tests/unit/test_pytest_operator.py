@@ -537,12 +537,9 @@ async def test_fixture_set_up_existing_model(
     assert len(ops_test.models) == 1
 
 
-@pytest.mark.parametrize("max_frame_size", [-1, 2**32])
-async def test_fixture_invalid_max_frame_size(
-    setup_request, tmp_path_factory, max_frame_size
-):
+async def test_fixture_invalid_max_frame_size(setup_request, tmp_path_factory):
     setup_request.config.option.model = "this-model"
-    setup_request.config.option.juju_max_frame_size = max_frame_size
+    setup_request.config.option.juju_max_frame_size = -1
     with pytest.raises(ValueError):
         plugin.OpsTest(setup_request, tmp_path_factory)
 
