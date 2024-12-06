@@ -79,6 +79,12 @@ Path to the directory where the `juju-crashdump` output will be stored. The defa
 the current working directory.
 
 
+### `--juju-max-frame-size`
+
+Maximum frame size to use when connecting to a juju model. The default is None and
+the value must be between 0 and MAX_FRAME_SIZE
+
+
 ## Fixtures
 
 ### `ops_test`

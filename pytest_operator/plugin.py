@@ -22,6 +22,8 @@ from random import choices
 from string import ascii_lowercase, digits, hexdigits
 from timeit import default_timer as timer
 from typing import (
+    Any,
+    Dict,
     Generator,
     Iterable,
     List,
@@ -45,7 +47,7 @@ import pytest_asyncio.plugin
 import yaml
 from _pytest.config import Config
 from _pytest.config.argparsing import Parser
-from juju.client import client
+from juju.client import client, connection
 from juju.client.jujudata import FileJujuData
 from juju.errors import JujuError
 from juju.exceptions import DeadEntityException
@@ -142,6 +144,13 @@ def pytest_addoption(parser: Parser):
         help="path to a yaml file which will be applied to the model on creation. "
         "* ignored if `--model` supplied"
         "* if the specified file doesn't exist, an error will be raised.",
+    )
+    parser.addoption(
+        "--juju-max-frame-size",
+        action="store",
+        default=None,
+        help="Set the maximum frame size for websocket communication with Juju.",
+        type=int,
     )
 
 
@@ -414,6 +423,20 @@ BundleOpt = Union[str, Path, "OpsTest.Bundle"]
 Timeout = TypeVar("Timeout", float, int)
 
 
+def _connect_kwds(request) -> Dict[str, Any]:
+    """Create a dict of keyword arguments for connecting to a model."""
+    kwds = {}
+    if val := request.config.option.juju_max_frame_size:
+        if 0 < val <= connection.Connection.MAX_FRAME_SIZE:
+            kwds["max_frame_size"] = val
+        else:
+            raise ValueError(
+                f"max-frame-size must be positive int and less than or equal to "
+                f"{connection.Connection.MAX_FRAME_SIZE}"
+            )
+    return kwds
+
+
 @dataclasses.dataclass
 class ModelState:
     model: Model
@@ -510,6 +533,7 @@ class OpsTest:
         self._init_model_name: Optional[str] = request.config.option.model
         self._init_keep_model: bool = request.config.option.keep_models
         self._init_destroy_storage: bool = request.config.option.destroy_storage
+        self._juju_connect_kwds: Dict[str, Any] = _connect_kwds(request)
 
         # These may be modified by _setup_model
         self.controller_name = request.config.option.controller
@@ -753,7 +777,7 @@ class OpsTest:
 
     @staticmethod
     async def _connect_to_model(
-        controller_name, model_name, keep=True, destroy_storage=False
+        controller_name, model_name, keep=True, destroy_storage=False, **connect_kwargs
     ):
         """
         Makes a reference to an existing model used by the test framework
@@ -766,13 +790,13 @@ class OpsTest:
         log.info(
             "Connecting to existing model %s on unspecified cloud", state.full_name
         )
-        await model.connect(state.full_name)
+        await model.connect(state.full_name, **connect_kwargs)
         state.config = await model.get_config()
         return state
 
     @staticmethod
     def read_model_config(
-        config_path_or_obj: Union[dict, str, os.PathLike, None]
+        config_path_or_obj: Union[dict, str, os.PathLike, None],
     ) -> Optional[dict]:
         if isinstance(config_path_or_obj, dict):
             return config_path_or_obj
@@ -796,7 +820,9 @@ class OpsTest:
         assert self.controller_name, "No controller selected for ops_test"
         if not self._controller:
             self._controller = Controller()
-            await self._controller.connect(self.controller_name)
+            await self._controller.connect(
+                self.controller_name, **self._juju_connect_kwds
+            )
 
         await self.track_model(
             alias,
@@ -883,7 +909,10 @@ class OpsTest:
                     "Cannot use_existing model if model_name is unspecified"
                 )
             model_state = await self._connect_to_model(
-                self.controller_name, model_name, keep_val
+                self.controller_name,
+                model_name,
+                keep_val,
+                **self._juju_connect_kwds,
             )
         else:
             cloud_name = cloud_name or self.cloud_name
@@ -1371,7 +1400,7 @@ class OpsTest:
                 bundle_zip = ZipPath(filepath, "bundle.yaml")
                 content = bundle_zip.read_text()
             else:
-                raise TypeError("bundle {} isn't a known Type".format(type(bundle)))
+                raise TypeError(f"bundle {type(bundle)} isn't a known Type")
             to_render.append(content)
         return self.render_bundles(*to_render, **context)
 

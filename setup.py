@@ -9,7 +9,7 @@ setup(
     author_email="cory.johns@canonical.com",
     description="Fixtures for Operators",
     long_description=Path("README.md").read_text(),
-    long_description_content_type='text/markdown',
+    long_description_content_type="text/markdown",
     classifiers=[
         "Framework :: Pytest",
         "Programming Language :: Python",
@@ -25,9 +25,9 @@ setup(
     keywords=["pytest", "py.test", "operators", "yaml", "asyncio"],
     name="pytest-operator",
     packages=find_packages(include=["pytest_operator"]),
-    package_data={'pytest_operator': ['py.typed']},
+    package_data={"pytest_operator": ["py.typed"]},
     url="https://github.com/charmed-kubernetes/pytest-operator",
-    version="0.38.0",
+    version="0.39.0",
     zip_safe=True,
     install_requires=[
         "ipdb",

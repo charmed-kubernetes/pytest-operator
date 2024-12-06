@@ -60,13 +60,13 @@ def test_tmp_path_without_tox(request, pytester):
     result.assert_outcomes(passed=1)
 
 
-async def test_destructive_mode(monkeypatch, tmp_path_factory):
+async def test_destructive_mode(setup_request, monkeypatch, tmp_path_factory):
     patch = monkeypatch.setattr
     patch(plugin.os, "getgroups", mock_getgroups := Mock(return_value=[]))
     patch(plugin.grp, "getgrall", mock_getgrall := Mock(return_value=[]))
     patch(plugin.grp, "getgrgid", Mock(return_value=Mock(gr_name="lxd")))
     patch(plugin.OpsTest, "run", mock_run := AsyncMock(return_value=(1, "", "")))
-    ops_test = plugin.OpsTest(Mock(**{"module.__name__": "test"}), tmp_path_factory)
+    ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
 
     ops_test.destructive_mode = True
     try:
@@ -225,8 +225,8 @@ async def resource_charm(request, tmp_path_factory):
     yield dst_path
 
 
-async def test_plugin_build_resources(tmp_path_factory):
-    ops_test = plugin.OpsTest(Mock(**{"module.__name__": "test"}), tmp_path_factory)
+async def test_plugin_build_resources(setup_request, tmp_path_factory):
+    ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
     ops_test.jujudata = Mock()
     ops_test.jujudata.path = ""
     dst_dir = ops_test.tmp_path / "resources"
@@ -257,8 +257,8 @@ async def test_plugin_build_resources(tmp_path_factory):
     assert resources and resources == expected_resources
 
 
-async def test_plugin_get_resources(tmp_path_factory, resource_charm):
-    ops_test = plugin.OpsTest(Mock(**{"module.__name__": "test"}), tmp_path_factory)
+async def test_plugin_get_resources(setup_request, tmp_path_factory, resource_charm):
+    ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
     resources = ops_test.arch_specific_resources(resource_charm)
     assert resources.keys() == {"resource-file-arm64", "resource-file"}
     assert resources["resource-file-arm64"].arch == "arm64"
@@ -269,8 +269,8 @@ async def test_plugin_get_resources(tmp_path_factory, resource_charm):
     "pytest_operator.plugin.CharmStore._charm_id",
     new=Mock(return_value="resourced-charm-1"),
 )
-async def test_plugin_fetch_resources(tmp_path_factory, resource_charm):
-    ops_test = plugin.OpsTest(Mock(**{"module.__name__": "test"}), tmp_path_factory)
+async def test_plugin_fetch_resources(setup_request, tmp_path_factory, resource_charm):
+    ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
     ops_test.jujudata = Mock()
     ops_test.jujudata.path = ""
     arch_resources = ops_test.arch_specific_resources(resource_charm)
@@ -295,8 +295,8 @@ async def test_plugin_fetch_resources(tmp_path_factory, resource_charm):
     assert downloaded == expected_downloads
 
 
-async def test_async_render_bundles(tmp_path_factory):
-    ops_test = plugin.OpsTest(Mock(**{"module.__name__": "test"}), tmp_path_factory)
+async def test_async_render_bundles(setup_request, tmp_path_factory):
+    ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
     ops_test.jujudata = Mock()
     ops_test.jujudata.path = ""
 
@@ -358,6 +358,7 @@ async def test_async_render_bundles(tmp_path_factory):
     ],
 )
 async def test_crash_dump_mode(
+    setup_request,
     crash_dump,
     no_crash_dump,
     n_testsfailed,
@@ -369,12 +370,11 @@ async def test_crash_dump_mode(
     """Test running juju-crashdump in OpsTest.cleanup."""
     patch = monkeypatch.setattr
     patch(plugin.OpsTest, "run", mock_run := AsyncMock(return_value=(0, "", "")))
-    mock_request = Mock(**{"module.__name__": "test"})
-    mock_request.config.option.crash_dump = crash_dump
-    mock_request.config.option.no_crash_dump = no_crash_dump
-    mock_request.config.option.crash_dump_args = "-c --bug=1234567"
-    mock_request.config.option.keep_models = False
-    ops_test = plugin.OpsTest(mock_request, tmp_path_factory)
+    setup_request.config.option.crash_dump = crash_dump
+    setup_request.config.option.no_crash_dump = no_crash_dump
+    setup_request.config.option.crash_dump_args = "-c --bug=1234567"
+    setup_request.config.option.keep_models = False
+    ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
     model = MagicMock()
     model.machines.values.return_value = []
     model.disconnect = AsyncMock()
@@ -389,7 +389,7 @@ async def test_crash_dump_mode(
     ops_test.log_model = AsyncMock()
     ops_test._controller = AsyncMock()
 
-    mock_request.session.testsfailed = n_testsfailed
+    setup_request.session.testsfailed = n_testsfailed
 
     await ops_test._cleanup_model()
 
@@ -407,18 +407,17 @@ async def test_crash_dump_mode(
         mock_run.assert_not_called()
 
 
-def test_crash_dump_mode_invalid_input(monkeypatch, tmp_path_factory):
+def test_crash_dump_mode_invalid_input(setup_request, monkeypatch, tmp_path_factory):
     """Test running juju-crashdump in OpsTest.cleanup."""
     patch = monkeypatch.setattr
     patch(plugin.OpsTest, "run", AsyncMock(return_value=(0, "", "")))
-    mock_request = Mock(**{"module.__name__": "test"})
-    mock_request.config.option.crash_dump = "not-a-real-option"
-    mock_request.config.option.crash_dump_args = ""
-    mock_request.config.option.no_crash_dump = False
-    mock_request.config.option.keep_models = False
+    setup_request.config.option.crash_dump = "not-a-real-option"
+    setup_request.config.option.crash_dump_args = ""
+    setup_request.config.option.no_crash_dump = False
+    setup_request.config.option.keep_models = False
 
     with pytest.raises(ValueError):
-        plugin.OpsTest(mock_request, tmp_path_factory)
+        plugin.OpsTest(setup_request, tmp_path_factory)
 
 
 async def test_create_crash_dump(monkeypatch, tmp_path_factory):
@@ -432,6 +431,7 @@ async def test_create_crash_dump(monkeypatch, tmp_path_factory):
     patch(plugin.OpsTest, "run", mock_run)
     mock_request = Mock(**{"module.__name__": "test"})
     mock_request.config.option.crash_dump_args = ""
+    mock_request.config.option.juju_max_frame_size = None
     patch(plugin, "log", mock_log := MagicMock())
     ops_test = plugin.OpsTest(mock_request, tmp_path_factory)
     await ops_test.create_crash_dump()
@@ -504,19 +504,28 @@ def setup_request(request, mock_juju):
     mock_request.config.option.model_config = None
     mock_request.config.option.keep_models = False
     mock_request.config.option.destroy_storage = False
+    mock_request.config.option.juju_max_frame_size = None
     yield mock_request
 
 
+@pytest.mark.parametrize("max_frame_size", [None, 2**16])
 async def test_fixture_set_up_existing_model(
-    mock_juju, setup_request, tmp_path_factory
+    mock_juju, setup_request, tmp_path_factory, max_frame_size
 ):
     setup_request.config.option.model = "this-model"
+    setup_request.config.option.juju_max_frame_size = max_frame_size
+    expected_kwargs = {}
+    if max_frame_size:
+        expected_kwargs["max_frame_size"] = max_frame_size
+
     ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
     assert ops_test.model is None
 
     mock_juju.controller.list_models = AsyncMock(return_value=["this-model"])
     await ops_test._setup_model()
-    mock_juju.model.connect.assert_called_with("this-controller:this-model")
+    mock_juju.model.connect.assert_called_with(
+        "this-controller:this-model", **expected_kwargs
+    )
     assert ops_test.model == mock_juju.model
     assert ops_test.model_full_name == "this-controller:this-model"
     assert ops_test.cloud_name is None
@@ -526,6 +535,16 @@ async def test_fixture_set_up_existing_model(
         ops_test.destroy_storage is False
     ), "Storage should not be destroyed by default"
     assert len(ops_test.models) == 1
+
+
+@pytest.mark.parametrize("max_frame_size", [-1, 2**32])
+async def test_fixture_invalid_max_frame_size(
+    setup_request, tmp_path_factory, max_frame_size
+):
+    setup_request.config.option.model = "this-model"
+    setup_request.config.option.juju_max_frame_size = max_frame_size
+    with pytest.raises(ValueError):
+        plugin.OpsTest(setup_request, tmp_path_factory)
 
 
 @patch("pytest_operator.plugin.OpsTest.forget_model")
