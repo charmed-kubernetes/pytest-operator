@@ -152,6 +152,12 @@ def pytest_addoption(parser: Parser):
         help="Set the maximum frame size for websocket communication with Juju.",
         type=int,
     )
+    parser.addoption(
+        "--charmcraft-args",
+        action="append",
+        help="Set extra charmcraft args.",
+        default=[],
+    )
 
 
 def pytest_load_initial_conftests(parser: Parser, args: List[str]) -> None:
@@ -531,6 +537,7 @@ class OpsTest:
         self._init_keep_model: bool = request.config.option.keep_models
         self._init_destroy_storage: bool = request.config.option.destroy_storage
         self._juju_connect_kwds: Dict[str, Any] = _connect_kwds(request)
+        self._charmcraft_args: List[str] = request.config.option.charmcraft_args
 
         # These may be modified by _setup_model
         self.controller_name = request.config.option.controller
@@ -1148,6 +1155,8 @@ class OpsTest:
                 cmd.append(f"--bases-index={bases_index}")
             if verbosity:
                 cmd.append(f"--verbosity={verbosity}")
+            for args in self._charmcraft_args:
+                cmd.append(args)
             if self.destructive_mode:
                 # host builder never requires lxd group
                 cmd.append("--destructive-mode")
