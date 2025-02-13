@@ -83,6 +83,16 @@ the current working directory.
 
 Maximum frame size to use when connecting to a juju model. The default is None
 
+### `--charmcraft-args`
+
+Extra set of arguments to pass to charmcraft when packing the charm
+* can be invoked multiple times to pass multiple arguments
+* example)
+```
+pytest ... \
+   --charmcraft-args '--platform=my-platform' \
+   --charmcraft-args '--verbosity=debug'
+```
 
 ## Fixtures
 

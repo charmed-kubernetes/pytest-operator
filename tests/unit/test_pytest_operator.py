@@ -60,6 +60,30 @@ def test_tmp_path_without_tox(request, pytester):
     result.assert_outcomes(passed=1)
 
 
+async def test_build_with_args(setup_request, monkeypatch, tmp_path_factory):
+    patch = monkeypatch.setattr
+    patch(plugin.os, "getgroups", mock_getgroups := Mock(return_value=[]))
+    patch(plugin.grp, "getgrall", Mock(return_value=[]))
+    patch(plugin.grp, "getgrgid", Mock(return_value=Mock(gr_name="lxd")))
+    patch(plugin.OpsTest, "run", mock_run := AsyncMock(return_value=(1, "", "")))
+    setup_request.config.option.charmcraft_args = ["--platform=special-platform"]
+    ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
+
+    mock_getgroups.return_value = [ANY]
+    ops_test.destructive_mode = False
+    try:
+        await ops_test.build_charm("tests/data/charms/operator-framework")
+    except RuntimeError as e:
+        # We didn't actually build it
+        assert str(e).startswith("Failed to build charm")
+    assert mock_run.called
+    assert mock_run.call_args[0] == (
+        "charmcraft",
+        "pack",
+        "--platform=special-platform",
+    )
+
+
 async def test_destructive_mode(setup_request, monkeypatch, tmp_path_factory):
     patch = monkeypatch.setattr
     patch(plugin.os, "getgroups", mock_getgroups := Mock(return_value=[]))
@@ -505,6 +529,7 @@ def setup_request(request, mock_juju):
     mock_request.config.option.keep_models = False
     mock_request.config.option.destroy_storage = False
     mock_request.config.option.juju_max_frame_size = None
+    mock_request.config.option.charmcraft_platform = None
     yield mock_request
 
 
