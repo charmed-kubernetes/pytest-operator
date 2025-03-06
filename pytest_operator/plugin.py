@@ -1108,20 +1108,22 @@ class OpsTest:
         verbosity: Optional[
             Literal["quiet", "brief", "verbose", "debug", "trace"]
         ] = None,
-    ) -> Path:
+        allow_all: bool = False,
+    ) -> Union[Path, List[Path]]:
         """Builds a single charm.
 
         This can handle charms using the older charms.reactive framework as
         well as charms written against the modern operator framework.
 
         Args:
-            charm_path: Path to the base source of the charm.
+            charm_path:  Path to the base source of the charm.
             bases_index: Index of `bases` configuration to build
                          (see charmcraft pack help)
-            verbosity: Verbosity level for charmcraft pack.
+            verbosity:   Verbosity level for charmcraft pack.
+            allow_all:   Return all built charms, not just the first one.
 
         Returns:
-            Returns a Path for the built charm file.
+            Returns a Path / Paths for the built charm file.
 
         Raises:
             RuntimeError: If the charm build fails.
@@ -1205,15 +1207,19 @@ class OpsTest:
             )
 
         # If charmcraft.yaml has multiple bases
-        # then multiple charms would be generated.
-        for charm_file_src in charm_abs.glob(f"{charm_name}*.charm"):
+        # then multiple charms would be generated, rename them all
+        charms = list(charm_abs.glob(f"{charm_name}*.charm"))
+        for idx, charm_file_src in enumerate(charms):
             charm_file_dst = charms_dst_dir / charm_file_src.name
-            charm_file_src.rename(charm_file_dst)
+            charms[idx] = charm_file_src.rename(charm_file_dst)
+
+        if not charms:
+            raise FileNotFoundError(f"No such file in '{charm_path}/*.charm'")
+        if charms and not allow_all:
             # Even though we may have multiple *.charm file,
             # for backwards compatibility we can - only return one.
-            return charm_file_dst
-        else:
-            FileNotFoundError(f"No such file in '{charm_path}/*.charm'")
+            return charms[0]
+        return charms
 
     async def build_charms(self, *charm_paths) -> Mapping[str, Path]:
         """Builds one or more charms in parallel.
