@@ -1110,7 +1110,7 @@ class OpsTest:
         verbosity: Optional[
             Literal["quiet", "brief", "verbose", "debug", "trace"]
         ] = None,
-        return_all: Literal[False] = False,
+        return_all: Literal[False] = False,  # default case first
     ) -> Path: ...
 
     @overload
