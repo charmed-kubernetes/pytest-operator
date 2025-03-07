@@ -34,6 +34,7 @@ from typing import (
     Tuple,
     TypeVar,
     Union,
+    overload,
 )
 from urllib.error import HTTPError
 from urllib.parse import urlencode
@@ -1101,6 +1102,28 @@ class OpsTest:
         self.aborted = True
         pytest.fail(*args, **kwargs)
 
+    @overload
+    async def build_charm(
+        self,
+        charm_path,
+        bases_index: Optional[int] = None,
+        verbosity: Optional[
+            Literal["quiet", "brief", "verbose", "debug", "trace"]
+        ] = None,
+        return_all: Literal[False] = False,
+    ) -> Path: ...
+
+    @overload
+    async def build_charm(
+        self,
+        charm_path,
+        bases_index: Optional[int] = None,
+        verbosity: Optional[
+            Literal["quiet", "brief", "verbose", "debug", "trace"]
+        ] = None,
+        return_all: Literal[True] = True,
+    ) -> List[Path]: ...
+
     async def build_charm(
         self,
         charm_path,
@@ -1108,7 +1131,7 @@ class OpsTest:
         verbosity: Optional[
             Literal["quiet", "brief", "verbose", "debug", "trace"]
         ] = None,
-        allow_all: bool = False,
+        return_all: bool = False,
     ) -> Union[Path, List[Path]]:
         """Builds a single charm.
 
@@ -1120,7 +1143,7 @@ class OpsTest:
             bases_index: Index of `bases` configuration to build
                          (see charmcraft pack help)
             verbosity:   Verbosity level for charmcraft pack.
-            allow_all:   Return all built charms, not just the first one.
+            return_all:  Return all built charms, not just the first one.
 
         Returns:
             Returns a Path / Paths for the built charm file.
@@ -1215,7 +1238,7 @@ class OpsTest:
 
         if not charms:
             raise FileNotFoundError(f"No such file in '{charm_path}/*.charm'")
-        if charms and not allow_all:
+        if charms and not return_all:
             # Even though we may have multiple *.charm file,
             # for backwards compatibility we can - only return one.
             return charms[0]
