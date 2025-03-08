@@ -231,14 +231,18 @@ Dataclass which represents a juju bundle.
 
 ### Methods
 
-#### `async def build_charm(self, charm_path, bases_index = None, verbosity = None)`
+#### `async def build_charm(self, charm_path, bases_index = None, verbosity = None, return_all = False)`
 
 Builds a charm.
 
 This can handle charms using the older charms.reactive framework as well as charms
 written against the modern operator framework.
 
-Returns a `pathlib.Path` for the built charm file.
+Returns a `pathlib.Path` for the built charm file if `return_all` is `False`
+Returns a `List[pathlib.Path]` for the built charms if `return_all` is `True`
+Raises a `FileNotFound` exception if no charms are found after a successful build.
+Raises a `RuntimeError` exception if the charm build fails.
+
 
 #### `async def build_charms(self, *charm_paths)`
 

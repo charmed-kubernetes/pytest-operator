@@ -60,22 +60,27 @@ def test_tmp_path_without_tox(request, pytester):
     result.assert_outcomes(passed=1)
 
 
-async def test_build_with_args(setup_request, monkeypatch, tmp_path_factory):
+@pytest.fixture()
+def mock_runner(monkeypatch):
     patch = monkeypatch.setattr
     patch(plugin.os, "getgroups", mock_getgroups := Mock(return_value=[]))
-    patch(plugin.grp, "getgrall", Mock(return_value=[]))
+    patch(plugin.grp, "getgrall", mock_getgrall := Mock(return_value=[]))
     patch(plugin.grp, "getgrgid", Mock(return_value=Mock(gr_name="lxd")))
-    patch(plugin.OpsTest, "run", mock_run := AsyncMock(return_value=(1, "", "")))
+    patch(plugin.OpsTest, "run", mock_run := AsyncMock(return_value=(0, "", "")))
+    yield mock_getgroups, mock_getgrall, mock_run
+
+
+async def test_build_with_args(setup_request, mock_runner, tmp_path_factory):
+    mock_getgroups, _, mock_run = mock_runner
     setup_request.config.option.charmcraft_args = ["--platform=special-platform"]
     ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
-
+    build_path = "tests/data/charms/operator-framework"
     mock_getgroups.return_value = [ANY]
     ops_test.destructive_mode = False
-    try:
-        await ops_test.build_charm("tests/data/charms/operator-framework")
-    except RuntimeError as e:
-        # We didn't actually build it
-        assert str(e).startswith("Failed to build charm")
+    with pytest.raises(FileNotFoundError) as exc_info:
+        await ops_test.build_charm(build_path)
+
+    assert str(exc_info.value) == f"No such file in '{build_path}/*.charm'"
     assert mock_run.called
     assert mock_run.call_args[0] == (
         "charmcraft",
@@ -84,14 +89,72 @@ async def test_build_with_args(setup_request, monkeypatch, tmp_path_factory):
     )
 
 
-async def test_destructive_mode(setup_request, monkeypatch, tmp_path_factory):
-    patch = monkeypatch.setattr
-    patch(plugin.os, "getgroups", mock_getgroups := Mock(return_value=[]))
-    patch(plugin.grp, "getgrall", mock_getgrall := Mock(return_value=[]))
-    patch(plugin.grp, "getgrgid", Mock(return_value=Mock(gr_name="lxd")))
-    patch(plugin.OpsTest, "run", mock_run := AsyncMock(return_value=(1, "", "")))
+@patch("pathlib.Path.glob")
+@patch("pathlib.Path.rename")
+async def test_build_return_all(
+    renamed, mock_glob, setup_request, mock_runner, tmp_path_factory
+):
+    mock_getgroups, _, mock_run = mock_runner
+    setup_request.config.option.charmcraft_args = ["--platform=special-platform"]
+    ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
+    charm_path = Path("tests/data/charms/operator-framework")
+    mock_getgroups.return_value = [ANY]
+    ops_test.destructive_mode = False
+    renamed.side_effect = lambda _: _
+    mock_glob.return_value = [
+        Path(f"tests/data/charms/operator-framework/{i}.charm") for i in range(3)
+    ]
+    built = await ops_test.build_charm(charm_path, return_all=True)
+
+    assert mock_run.called
+    assert mock_run.call_args[0] == (
+        "charmcraft",
+        "pack",
+        "--platform=special-platform",
+    )
+    expected_dest = ops_test.tmp_path / "charms"
+    assert len(built) == 3, "All built charms should be returned"
+    assert all(
+        str(f).startswith(str(expected_dest)) for f in built
+    ), "All built charms should be in the same directory"
+
+
+@patch(
+    "pathlib.Path.glob",
+)
+@patch("pathlib.Path.rename")
+async def test_build_return_one(
+    renamed, mock_glob, setup_request, mock_runner, tmp_path_factory
+):
+    mock_getgroups, _, mock_run = mock_runner
+    setup_request.config.option.charmcraft_args = ["--platform=special-platform"]
+    ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
+    charm_path = Path("tests/data/charms/operator-framework")
+    ops_test.destructive_mode = False
+    renamed.side_effect = lambda _: _
+    mock_glob.return_value = [
+        Path(f"tests/data/charms/operator-framework/{i}.charm") for i in range(3)
+    ]
+
+    mock_getgroups.return_value = [ANY]
+    ops_test.destructive_mode = False
+    built = await ops_test.build_charm(charm_path)
+
+    assert mock_run.called
+    assert mock_run.call_args[0] == (
+        "charmcraft",
+        "pack",
+        "--platform=special-platform",
+    )
+    expected_dest = ops_test.tmp_path / "charms" / "0.charm"
+    assert built == expected_dest, "Only the first built charm should be returned"
+
+
+async def test_destructive_mode(setup_request, mock_runner, tmp_path_factory):
+    mock_getgroups, mock_getgrall, mock_run = mock_runner
     ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
 
+    mock_run.return_value = (1, "", "")
     ops_test.destructive_mode = True
     try:
         await ops_test.build_charm("tests/data/charms/operator-framework")
