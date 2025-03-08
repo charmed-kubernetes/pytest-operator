@@ -24,6 +24,7 @@ from timeit import default_timer as timer
 from typing import (
     Any,
     Dict,
+    Generic,
     Generator,
     Iterable,
     List,
@@ -69,8 +70,7 @@ def pytest_addoption(parser: Parser):
     parser.addoption(
         "--controller",
         action="store",
-        help="Juju controller to use; if not provided, "
-        "will use the current controller",
+        help="Juju controller to use; if not provided, will use the current controller",
     )
     parser.addoption(
         "--model-alias",
@@ -172,10 +172,9 @@ def pytest_configure(config: Config):
     config.addinivalue_line("markers", "abort_on_fail")
     config.addinivalue_line("markers", "skip_if_deployed")
 
-    if config.option.basetemp is None:
-        tox_dir = os.environ.get("TOX_ENV_DIR")
-        if tox_dir:
-            config.option.basetemp = Path(tox_dir) / "tmp/pytest"
+    if tox_dir := os.environ.get("TOX_ENV_DIR"):
+        config.option.basetemp = Path(tox_dir) / "tmp/pytest"
+    log.info("Using basetemp: %s", config.option.basetemp)
 
 
 def pytest_runtest_setup(item):
@@ -203,7 +202,7 @@ def check_deps(*deps):
 
 
 @pytest.fixture(scope="module")
-def event_loop():
+def event_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
     """Create an instance of the default event loop for each test module."""
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
@@ -211,7 +210,7 @@ def event_loop():
 
 
 # Plugin load order can't be set, replace asyncio directly
-pytest_asyncio.plugin.event_loop = event_loop
+pytest_asyncio.plugin.event_loop = event_loop  # type: ignore
 
 
 def pytest_collection_modifyitems(session, config, items):
@@ -442,12 +441,12 @@ def _connect_kwds(request) -> Dict[str, Any]:
 
 
 @dataclasses.dataclass
-class ModelState:
+class ModelState(Generic[Timeout]):
     model: Model
     keep: bool
     destroy_storage: bool
     controller_name: str
-    cloud_name: Optional[str]
+    cloud_name: str
     model_name: str
     config: Optional[dict] = None
     tmp_path: Optional[Path] = None
@@ -459,7 +458,7 @@ class ModelState:
 
 
 @dataclasses.dataclass
-class CloudState:
+class CloudState(Generic[Timeout]):
     cloud_name: str
     models: List[str] = dataclasses.field(default_factory=list)
     timeout: Optional[Timeout] = None
@@ -520,7 +519,7 @@ class OpsTest:
                 if field.default is not dataclasses.MISSING
             ]
 
-    def __init__(self, request, tmp_path_factory):
+    def __init__(self, request, tmp_path_factory) -> None:
         self.request = request
         self._tmp_path_factory = tmp_path_factory
         self._global_tmp_path = None
@@ -558,7 +557,7 @@ class OpsTest:
 
         # maintains a set of all models connected by this fixture
         # use an OrderedDict so that the first model made is destroyed last.
-        self._current_alias = None
+        self._current_alias: Optional[str] = None
         self._models: MutableMapping[str, ModelState] = OrderedDict()
         self._clouds: MutableMapping[str, CloudState] = OrderedDict()
 
@@ -575,9 +574,18 @@ class OpsTest:
             # if the there's a failure after yielding, don't fail to
             # switch back to the prior alias but still raise whatever
             # error condition occurred through the context
-            self._switch(prior, raise_not_found=False)
+            if isinstance(prior, str):
+                self._switch(prior, raise_not_found=False)
 
-    def _switch(self, alias: str, raise_not_found=True) -> Model:
+    @overload
+    def _switch(self, alias: str, raise_not_found: Literal[True] = True) -> Model: ...
+
+    @overload
+    def _switch(
+        self, alias: str, raise_not_found: Literal[False] = False
+    ) -> Optional[Model]: ...
+
+    def _switch(self, alias: str, raise_not_found=True) -> Optional[Model]:
         if alias in self._models:
             self._current_alias = alias
         elif not raise_not_found:
@@ -777,6 +785,8 @@ class OpsTest:
         """
         returns True when the model_name exists in the model.
         """
+        if not self._controller:
+            return False
         all_models = await self._controller.list_models()
         return model_name in all_models
 
@@ -790,13 +800,16 @@ class OpsTest:
         """
         model = Model()
         state = ModelState(
-            model, keep, destroy_storage, controller_name, None, model_name
+            model, keep, destroy_storage, controller_name, "", model_name
         )
         log.info(
             "Connecting to existing model %s on unspecified cloud", state.full_name
         )
         await model.connect(state.full_name, **connect_kwargs)
         state.config = await model.get_config()
+        controller = await model.get_controller()
+        state.cloud_name = await controller.get_cloud()
+
         return state
 
     @staticmethod
@@ -920,13 +933,13 @@ class OpsTest:
                 **self._juju_connect_kwds,
             )
         else:
-            cloud_name = cloud_name or self.cloud_name
+            cloud_name = cloud_name or self.cloud_name or ""
             model_name = model_name or self._generate_name(kind="model")
             model_state = await self._add_model(
                 cloud_name, model_name, keep_val, destroy_storage_val, **kwargs
             )
         self._models[alias] = model_state
-        if ops_cloud := self._clouds.get(cloud_name):
+        if ops_cloud := self._clouds.get(model_state.cloud_name):
             ops_cloud.models.append(alias)
         return model_state.model
 
@@ -986,7 +999,7 @@ class OpsTest:
         if not alias:
             alias = self.current_alias
 
-        if alias not in self.models:
+        if not alias or alias not in self.models:
             raise ModelNotFoundError(f"{alias} not found")
 
         model_state: ModelState = self._models[alias]
@@ -1127,7 +1140,7 @@ class OpsTest:
     async def build_charm(
         self,
         charm_path,
-        bases_index: int = None,
+        bases_index: Optional[int] = None,
         verbosity: Optional[
             Literal["quiet", "brief", "verbose", "debug", "trace"]
         ] = None,
@@ -1730,6 +1743,9 @@ class OpsTest:
             juju_cloud_config["operator-storage"] = storage_class
 
         controller = self._controller
+        if not controller:
+            raise RuntimeError("No controller currently set.")
+
         cloud_name = cloud_name or self._generate_name("k8s-cloud")
         log.info(f"Adding k8s cloud {cloud_name}")
 
@@ -1784,5 +1800,6 @@ class OpsTest:
         for model in reversed(self._clouds[cloud_name].models):
             await self.forget_model(model, destroy_storage=True)
         log.info(f"Forgetting cloud: {cloud_name}...")
-        await self._controller.remove_cloud(cloud_name)
+        if self._controller:
+            await self._controller.remove_cloud(cloud_name)
         del self._clouds[cloud_name]

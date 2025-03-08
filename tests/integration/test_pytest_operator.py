@@ -76,9 +76,9 @@ class TestPlugin:
         with ops_test.model_context(model_alias) as model:
             assert model is new_model, "model_context should yield the new model"
             assert model.info.name == ops_test.model_name
-            assert (
-                not model.applications
-            ), "There should be no applications in the model"
+            assert not model.applications, (
+                "There should be no applications in the model"
+            )
             assert model is not prior_model, "Two models are different objects"
             assert ops_test.model is model, "Should reference the context model"
             await ops_test.forget_model(model_alias)  # removes the newly created model

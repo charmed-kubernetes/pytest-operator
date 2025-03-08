@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from websockets.exceptions import ConnectionClosed
 from zipfile import ZipFile
 import pytest
+import pytest_asyncio
 
 from pytest_operator import plugin
 
@@ -24,12 +25,18 @@ def test_tmp_path_with_tox(pytester):
         f"""
         import os
         from pathlib import Path
+        import pytest
 
         os.environ.update(**{ENV})
-        async def test_with_tox(ops_test):
-            expected_base = Path("{ENV["TOX_ENV_DIR"]}") / "tmp" / "pytest"
+
+        def test_with_tox(ops_test):
+            tox_env_dir = "{ENV["TOX_ENV_DIR"]}"
+            passed_tox_env_dir = os.environ.get("TOX_ENV_DIR")
+            assert passed_tox_env_dir == tox_env_dir
+
+            expected_base = Path(tox_env_dir) / "tmp" / "pytest"
             common = os.path.commonpath([ops_test.tmp_path, expected_base])
-            assert expected_base == Path(common)
+            assert expected_base == Path(common), f"{{ops_test.tmp_path}} didn't match {{expected_base}}"
         """
     )
     result = pytester.runpytest()
@@ -39,14 +46,17 @@ def test_tmp_path_with_tox(pytester):
 @patch.object(plugin, "check_deps", Mock())
 @patch.object(plugin.OpsTest, "_setup_model", AsyncMock())
 @patch.object(plugin.OpsTest, "_cleanup_models", AsyncMock())
-def test_tmp_path_without_tox(request, pytester):
+def test_tmp_path_without_tox(pytester):
     pytester.makepyfile(
         f"""
         import os
         from pathlib import Path
+        import pytest
 
         os.environ.update(**{ENV})
-        async def test_without_tox(request, ops_test):
+        os.environ.pop("TOX_ENV_DIR", None)
+
+        def test_without_tox(request, ops_test):
             unexpected_base = Path("{ENV["TOX_ENV_DIR"]}") / "tmp" / "pytest"
             common = os.path.commonpath([ops_test.tmp_path, unexpected_base])
             assert unexpected_base != Path(common)
@@ -89,6 +99,7 @@ async def test_build_with_args(setup_request, mock_runner, tmp_path_factory):
     )
 
 
+@pytest.mark.asyncio
 @patch("pathlib.Path.glob")
 @patch("pathlib.Path.rename")
 async def test_build_return_all(
@@ -114,11 +125,12 @@ async def test_build_return_all(
     )
     expected_dest = ops_test.tmp_path / "charms"
     assert len(built) == 3, "All built charms should be returned"
-    assert all(
-        str(f).startswith(str(expected_dest)) for f in built
-    ), "All built charms should be in the same directory"
+    assert all(str(f).startswith(str(expected_dest)) for f in built), (
+        "All built charms should be in the same directory"
+    )
 
 
+@pytest.mark.asyncio
 @patch(
     "pathlib.Path.glob",
 )
@@ -150,6 +162,7 @@ async def test_build_return_one(
     assert built == expected_dest, "Only the first built charm should be returned"
 
 
+@pytest.mark.asyncio
 async def test_destructive_mode(setup_request, mock_runner, tmp_path_factory):
     mock_getgroups, mock_getgrall, mock_run = mock_runner
     ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
@@ -301,7 +314,7 @@ class TestCharmstore:
             )
 
 
-@pytest.fixture(scope="module")
+@pytest_asyncio.fixture(scope="module")
 async def resource_charm(request, tmp_path_factory):
     """Creates a mock charm without building it."""
     dst_path = tmp_path_factory.mktemp(request.fixturename) / "resourced-charm.charm"
@@ -312,6 +325,7 @@ async def resource_charm(request, tmp_path_factory):
     yield dst_path
 
 
+@pytest.mark.asyncio
 async def test_plugin_build_resources(setup_request, tmp_path_factory):
     ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
     ops_test.jujudata = Mock()
@@ -344,6 +358,7 @@ async def test_plugin_build_resources(setup_request, tmp_path_factory):
     assert resources and resources == expected_resources
 
 
+@pytest.mark.asyncio
 async def test_plugin_get_resources(setup_request, tmp_path_factory, resource_charm):
     ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
     resources = ops_test.arch_specific_resources(resource_charm)
@@ -352,6 +367,7 @@ async def test_plugin_get_resources(setup_request, tmp_path_factory, resource_ch
     assert resources["resource-file"].arch == "amd64"
 
 
+@pytest.mark.asyncio
 @patch(
     "pytest_operator.plugin.CharmStore._charm_id",
     new=Mock(return_value="resourced-charm-1"),
@@ -382,6 +398,7 @@ async def test_plugin_fetch_resources(setup_request, tmp_path_factory, resource_
     assert downloaded == expected_downloads
 
 
+@pytest.mark.asyncio
 async def test_async_render_bundles(setup_request, tmp_path_factory):
     ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
     ops_test.jujudata = Mock()
@@ -413,6 +430,7 @@ async def test_async_render_bundles(setup_request, tmp_path_factory):
     assert bundles[0].read_text() == "a: 1"
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "crash_dump, no_crash_dump, n_testsfailed, keep_models, expected_crashdump",
     [
@@ -507,6 +525,7 @@ def test_crash_dump_mode_invalid_input(setup_request, monkeypatch, tmp_path_fact
         plugin.OpsTest(setup_request, tmp_path_factory)
 
 
+@pytest.mark.asyncio
 async def test_create_crash_dump(monkeypatch, tmp_path_factory):
     """Test running create crash dump."""
 
@@ -596,6 +615,7 @@ def setup_request(request, mock_juju):
     yield mock_request
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("max_frame_size", [None, 2**16])
 async def test_fixture_set_up_existing_model(
     mock_juju, setup_request, tmp_path_factory, max_frame_size
@@ -616,12 +636,12 @@ async def test_fixture_set_up_existing_model(
     )
     assert ops_test.model == mock_juju.model
     assert ops_test.model_full_name == "this-controller:this-model"
-    assert ops_test.cloud_name is None
+    assert ops_test.cloud_name == "this-cloud"
     assert ops_test.model_name == "this-model"
     assert ops_test.keep_model is True, "Model should be kept if it already exists"
-    assert (
-        ops_test.destroy_storage is False
-    ), "Storage should not be destroyed by default"
+    assert ops_test.destroy_storage is False, (
+        "Storage should not be destroyed by default"
+    )
     assert len(ops_test.models) == 1
 
 
@@ -632,6 +652,7 @@ async def test_fixture_invalid_max_frame_size(setup_request, tmp_path_factory):
         plugin.OpsTest(setup_request, tmp_path_factory)
 
 
+@pytest.mark.asyncio
 @patch("pytest_operator.plugin.OpsTest.forget_model")
 @patch("pytest_operator.plugin.OpsTest.run")
 async def test_fixture_cleanup_multi_model(
@@ -652,6 +673,7 @@ async def test_fixture_cleanup_multi_model(
     )
 
 
+@pytest.mark.asyncio
 @patch("pytest_operator.plugin.OpsTest.forget_model", AsyncMock())
 @patch("pytest_operator.plugin.OpsTest.run", AsyncMock())
 @pytest.mark.parametrize(
@@ -679,17 +701,18 @@ async def test_model_keep_options(
     ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
     await ops_test._setup_model()
     with ops_test.model_context("main"):
-        assert ops_test.keep_model is bool(
-            global_flag
-        ), "main model should follow global flag"
+        assert ops_test.keep_model is bool(global_flag), (
+            "main model should follow global flag"
+        )
 
     await ops_test.track_model("secondary", keep=keep)
     with ops_test.model_context("secondary"):
-        assert (
-            ops_test.keep_model is expected
-        ), f"{ops_test.model_full_name} should follow configured keep"
+        assert ops_test.keep_model is expected, (
+            f"{ops_test.model_full_name} should follow configured keep"
+        )
 
 
+@pytest.mark.asyncio
 @patch("pytest_operator.plugin.OpsTest.forget_model", AsyncMock())
 @patch("pytest_operator.plugin.OpsTest.run", AsyncMock())
 @pytest.mark.parametrize(
@@ -710,17 +733,18 @@ async def test_destroy_storage_options(
     ops_test = plugin.OpsTest(setup_request, tmp_path_factory)
     await ops_test._setup_model()
     with ops_test.model_context("main"):
-        assert ops_test.destroy_storage is bool(
-            global_flag
-        ), "main model should follow global flag"
+        assert ops_test.destroy_storage is bool(global_flag), (
+            "main model should follow global flag"
+        )
 
     await ops_test.track_model("secondary", destroy_storage=destroy_storage)
     with ops_test.model_context("secondary"):
-        assert (
-            ops_test.destroy_storage is expected
-        ), f"{ops_test.model_full_name} should follow configured destroy_storage"
+        assert ops_test.destroy_storage is expected, (
+            f"{ops_test.model_full_name} should follow configured destroy_storage"
+        )
 
 
+@pytest.mark.asyncio
 @patch("pytest_operator.plugin.OpsTest.default_model_name", new_callable=PropertyMock)
 @patch("pytest_operator.plugin.OpsTest.juju", autospec=True)
 async def test_fixture_set_up_automatic_model(
@@ -745,11 +769,16 @@ async def test_fixture_set_up_automatic_model(
     assert len(ops_test.models) == 1
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("model_name", [None, "alt-model"])
 @pytest.mark.parametrize("cloud_name", [None, "alt-cloud"])
 @pytest.mark.parametrize(
     "block_exception",
-    [None, asyncio.TimeoutError(), ConnectionClosed(1, "test", False)],
+    [
+        None,
+        MagicMock(autospec=asyncio.TimeoutError),
+        MagicMock(autospec=ConnectionClosed),
+    ],
 )
 @patch("pytest_operator.plugin.OpsTest.juju", autospec=True)
 async def test_fixture_create_remove_model(
