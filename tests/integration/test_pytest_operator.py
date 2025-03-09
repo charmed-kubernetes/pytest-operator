@@ -10,6 +10,7 @@ log = logging.getLogger(__name__)
 
 
 class TestPlugin:
+    @pytest.mark.asyncio
     @pytest.mark.abort_on_fail
     async def test_build_and_deploy(self, ops_test):
         lib_path = Path(__file__).parent.parent / "data" / "test_lib"
@@ -48,12 +49,14 @@ class TestPlugin:
         for unit in ops_test.model.units.values():
             assert f"{unit.name}: {unit.workload_status}".endswith("active")
 
+    @pytest.mark.asyncio
     async def test_0_shared_model_and_test_order(self, ops_test):
         assert ops_test.model.applications.keys() == {
             "reactive-framework",
             "operator-framework",
         }
 
+    @pytest.mark.asyncio
     async def test_1_create_crash_dump(self, ops_test):
         """Check if juju-crashdump was called."""
         # configure juju-crashdump output directory to pytest-operator tmp directory
@@ -63,6 +66,7 @@ class TestPlugin:
         crashdumps = set(ops_test.tmp_path.glob("juju-crashdump-*.tar.xz"))
         assert len(crashdumps) > 0, "no crash dump was found"
 
+    @pytest.mark.asyncio
     async def test_2_create_delete_new_model(self, ops_test):
         assert ops_test.model.applications.keys() == {
             "reactive-framework",
@@ -76,9 +80,9 @@ class TestPlugin:
         with ops_test.model_context(model_alias) as model:
             assert model is new_model, "model_context should yield the new model"
             assert model.info.name == ops_test.model_name
-            assert (
-                not model.applications
-            ), "There should be no applications in the model"
+            assert not model.applications, (
+                "There should be no applications in the model"
+            )
             assert model is not prior_model, "Two models are different objects"
             assert ops_test.model is model, "Should reference the context model"
             await ops_test.forget_model(model_alias)  # removes the newly created model
@@ -99,6 +103,7 @@ class TestPlugin:
         assert duplicate.info.uuid == prior_model.info.uuid
         await ops_test.forget_model("duplicate", timeout=30, allow_failure=False)
 
+    @pytest.mark.asyncio
     async def test_3_context_failure_reverts_model(self, ops_test):
         model_alias = "secondary"
         await ops_test.track_model(model_alias)
@@ -109,6 +114,7 @@ class TestPlugin:
         assert ops_test.current_alias == prior_alias
 
 
+@pytest.mark.asyncio
 async def test_func(ops_test):
     assert ops_test.model
 
@@ -118,6 +124,7 @@ def test_tmp_path(ops_test):
     assert ops_test.tmp_path.relative_to(tox_env_dir)
 
 
+@pytest.mark.asyncio
 async def test_run(ops_test):
     assert await ops_test.run("/bin/true") == (0, "", "")
     assert await ops_test.run("/bin/false") == (1, "", "")
@@ -132,6 +139,7 @@ async def test_run(ops_test):
     assert await ops_test.run("/usr/bin/rev", stdin=stdin) == (0, revd, "")
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "fast_interval, slow_interval",
     (
