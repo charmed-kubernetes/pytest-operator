@@ -57,6 +57,9 @@ profile = "black"
 explicit_package_bases = true
 namespace_packages = true
 
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "module"
+
 [tool.setuptools]
 zip-safe = true
 
