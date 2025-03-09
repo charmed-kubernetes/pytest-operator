@@ -20,7 +20,7 @@ authors = [
 dependencies = [
   "ipdb",
   "pytest",
-  "pytest-asyncio",
+  "pytest-asyncio<0.23",
   "pyyaml",
   "juju",
   "jinja2",
@@ -56,6 +56,9 @@ profile = "black"
 [tool.mypy]
 explicit_package_bases = true
 namespace_packages = true
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "module"
 
 [tool.setuptools]
 zip-safe = true

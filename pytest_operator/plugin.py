@@ -202,7 +202,7 @@ def check_deps(*deps):
 
 
 @pytest.fixture(scope="module")
-def event_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
+def event_loop():
     """Create an instance of the default event loop for each test module."""
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
@@ -214,12 +214,12 @@ pytest_asyncio.plugin.event_loop = event_loop  # type: ignore
 
 
 def pytest_collection_modifyitems(session, config, items):
-    """Automatically apply the "asyncio" marker to any async test items."""
+    """Automatically apply the "pytest.mark.asyncio" marker to any async testitems."""
     for item in items:
         is_async = inspect.iscoroutinefunction(getattr(item, "function", None))
         has_marker = item.get_closest_marker("asyncio")
         if is_async and not has_marker:
-            item.add_marker("asyncio")
+            item.add_marker(pytest.mark.asyncio)
 
 
 @pytest.hookimpl(tryfirst=True, hookwrapper=True)

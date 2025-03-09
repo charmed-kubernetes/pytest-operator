@@ -6,6 +6,7 @@ import pytest
 from pytest_operator.plugin import OpsTest
 
 
+@pytest.mark.asyncio
 async def test_add_k8s(ops_test: OpsTest):
     try:
         k8s_cloud = await ops_test.add_k8s(skip_storage=False)
