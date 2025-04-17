@@ -1688,7 +1688,7 @@ class OpsTest:
         @param bool skip_storage:
             True will not use cloud storage,
             False either finds storage or uses storage_class
-        @param Optional[str] skip_storage:
+        @param Optional[str] storage_class:
             cluster storage-class to use for juju storage
             None will look for a default storage class within the cluster
 
