@@ -1645,9 +1645,12 @@ class OpsTest:
         else:
             interval_after = (await model.get_config())[update_interval_key]
 
-        await model.set_config({update_interval_key: fast_interval})
-        yield
-        await model.set_config({update_interval_key: interval_after})
+        try:
+            await model.set_config({update_interval_key: fast_interval})
+            yield
+        finally:
+            # Whatever happens, we restore the interval.
+            await model.set_config({update_interval_key: interval_after})
 
     def is_crash_dump_enabled(self) -> bool:
         """Returns whether Juju crash dump is enabled given the current settings."""
