@@ -164,6 +164,34 @@ async def test_fast_forward(ops_test: OpsTest, fast_interval, slow_interval):
     assert await _get_rate() == slow_interval or previous_rate
 
 
+@pytest.mark.parametrize(
+    "fast_interval, slow_interval",
+    (
+        ("10s", None),
+        ("10s", "10m"),
+        ("42s", "42m"),
+        ("41m", "41s"),  # odd but... why not.
+        ("43s", None),
+    ),
+)
+async def test_fast_forward_with_exception(
+    ops_test: OpsTest, fast_interval, slow_interval
+):
+    async def _get_rate():
+        return (await ops_test.model.get_config())["update-status-hook-interval"].value
+
+    previous_rate = await _get_rate()
+
+    with pytest.raises(ValueError):
+        async with ops_test.fast_forward(
+            fast_interval=fast_interval, slow_interval=slow_interval
+        ):
+            assert await _get_rate() == fast_interval
+            raise ValueError
+
+    assert await _get_rate() == slow_interval or previous_rate
+
+
 @pytest.mark.abort_on_fail(abort_on_xfail=True)
 def test_abort():
     pytest.xfail("abort")
