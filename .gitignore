@@ -1,3 +1,7 @@
+# ideally, a developer should add the following line to their own `~/.gitignore_global`
+.idea
+.vscode
+.vs
 .tox
 *__pycache__
 *egg-info
