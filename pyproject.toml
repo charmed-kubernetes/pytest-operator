@@ -1,0 +1,99 @@
+[build-system]
+requires = ["setuptools>=70.3.0", "setuptools_scm"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+version_scheme = "guess-next-dev"
+local_scheme = "node-and-date"
+
+[project]
+name = "pytest-operator"
+dynamic = ["version"]
+description = "Fixtures for Charmed Operators"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "Apache" }
+authors = [
+  {name="Adam Dyess",   email="adam.dyess@canonical.com"},
+  {name="Mateo Florido", email="mateo.florido@canonical.com"}
+]
+dependencies = [
+  "ipdb",
+  "pytest",
+  "pytest-asyncio<0.23",
+  "pyyaml",
+  "juju",
+  "jinja2",
+]
+keywords = [
+  "pytest",
+  "py.test",
+  "operators",
+  "ops",
+]
+classifiers = [
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12"
+]
+
+[project.entry-points.pytest11]
+pytest-operator = "pytest_operator.plugin"
+
+
+[project.urls]
+"Homepage" = "https://github.com/charmed-kubernetes/pytest-operator"
+"Bug Tracker" = "https://github.com/charmed-kubernetes/pytest-operator/issues"
+
+[tool.isort]
+line_length = 88
+profile = "black"
+
+[tool.mypy]
+explicit_package_bases = true
+namespace_packages = true
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "module"
+
+[tool.setuptools]
+zip-safe = true
+
+[tool.setuptools.packages.find]
+namespaces = true
+
+[tool.ruff]
+line-length = 88
+extend-exclude = ["__pycache__", "*.egg_info"]
+
+[[tool.mypy.overrides]]
+module = [
+  "charms",
+  "charms.reactive",
+  "ipdb",
+  "kubernetes.*",
+]
+ignore_missing_imports = true
+
+[dependency-groups]
+format = ["ruff"]
+lint = [
+  "mypy",
+  "types-PyYAML",
+  "types-setuptools",
+  "ops",
+  {include-group = "format"},
+  {include-group = "unit"},
+]
+publish = [
+  "twine"
+]
+unit = [
+  "pytest>=8.3.4",
+  "pytest-cov>=5.0.0",
+  "pytest-html",
+]
