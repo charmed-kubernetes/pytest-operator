@@ -1226,7 +1226,10 @@ class OpsTest:
                 except FileNotFoundError:
                     log.error(f"Failed to read full build log from {m.group(1)}")
             raise RuntimeError(
-                f"Failed to build charm {charm_path}:\n{stderr}\n{stdout}"
+                f"Failed to build charm at path `{charm_path}`:\n"
+                f"    command used: `{' '.join(cmd)}`\n"
+                f"    stdout: {stdout or '(null)'}\n"
+                f"    stderr: {stderr or '(null)'}\n"
             )
 
         # If charmcraft.yaml has multiple bases
