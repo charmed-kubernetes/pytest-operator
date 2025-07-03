@@ -14,23 +14,24 @@ from pytest_operator import plugin
 
 log = logging.getLogger(__name__)
 
-ENV = {_: os.environ.get(_) for _ in ["HOME", "TOX_ENV_DIR"]}
+USER_HOME = os.getenv("HOME")
+TOX_ENV_DIR = os.getenv("TOX_ENV_DIR")
 
 
 @patch.object(plugin, "check_deps", Mock())
 @patch.object(plugin.OpsTest, "_setup_model", AsyncMock())
 @patch.object(plugin.OpsTest, "_cleanup_models", AsyncMock())
-def test_tmp_path_with_tox(pytester):
+def test_tmp_path_with_tox(pytester, monkeypatch):
+    monkeypatch.setenv("TOX_ENV_DIR", TOX_ENV_DIR)
+    monkeypatch.setenv("HOME", USER_HOME)
     pytester.makepyfile(
         f"""
         import os
         from pathlib import Path
         import pytest
 
-        os.environ.update(**{ENV})
-
         def test_with_tox(ops_test):
-            tox_env_dir = "{ENV["TOX_ENV_DIR"]}"
+            tox_env_dir = "{TOX_ENV_DIR}"
             passed_tox_env_dir = os.environ.get("TOX_ENV_DIR")
             assert passed_tox_env_dir == tox_env_dir
 
@@ -39,25 +40,26 @@ def test_tmp_path_with_tox(pytester):
             assert expected_base == Path(common), f"{{ops_test.tmp_path}} didn't match {{expected_base}}"
         """
     )
-    result = pytester.runpytest()
+    result = pytester.runpytest_inprocess("-s")
     result.assert_outcomes(passed=1)
 
 
 @patch.object(plugin, "check_deps", Mock())
 @patch.object(plugin.OpsTest, "_setup_model", AsyncMock())
 @patch.object(plugin.OpsTest, "_cleanup_models", AsyncMock())
-def test_tmp_path_without_tox(pytester):
+def test_tmp_path_without_tox(pytester, monkeypatch):
+    monkeypatch.setenv("TOX_ENV_DIR", None)
+    monkeypatch.setenv("HOME", USER_HOME)
     pytester.makepyfile(
         f"""
         import os
         from pathlib import Path
         import pytest
 
-        os.environ.update(**{ENV})
         os.environ.pop("TOX_ENV_DIR", None)
 
         def test_without_tox(request, ops_test):
-            unexpected_base = Path("{ENV["TOX_ENV_DIR"]}") / "tmp" / "pytest"
+            unexpected_base = Path("{TOX_ENV_DIR}") / "tmp" / "pytest"
             common = os.path.commonpath([ops_test.tmp_path, unexpected_base])
             assert unexpected_base != Path(common)
 
@@ -66,7 +68,7 @@ def test_tmp_path_without_tox(pytester):
             assert expected_base == Path(common)
         """
     )
-    result = pytester.runpytest("--basetemp=/tmp/pytest")
+    result = pytester.runpytest_inprocess("--basetemp=/tmp/pytest")
     result.assert_outcomes(passed=1)
 
 
