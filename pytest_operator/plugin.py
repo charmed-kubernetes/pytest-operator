@@ -172,8 +172,9 @@ def pytest_configure(config: Config):
     config.addinivalue_line("markers", "abort_on_fail")
     config.addinivalue_line("markers", "skip_if_deployed")
 
-    if tox_dir := os.environ.get("TOX_ENV_DIR"):
-        config.option.basetemp = Path(tox_dir) / "tmp/pytest"
+    if config.option.basetemp is None:
+        if tox_dir := os.environ.get("TOX_ENV_DIR"):
+            config.option.basetemp = Path(tox_dir) / "tmp/pytest"
     log.info("Using basetemp: %s", config.option.basetemp)
 
 
