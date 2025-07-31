@@ -57,6 +57,8 @@ from juju.model import Controller, Model, websockets
 from kubernetes import client as k8s_client
 from kubernetes.client import Configuration as K8sConfiguration
 
+from pytest_operator.cos import deploy_and_assert_grafana_agent
+
 log = logging.getLogger(__name__)
 
 
@@ -1810,3 +1812,19 @@ class OpsTest:
         if self._controller:
             await self._controller.remove_cloud(cloud_name)
         del self._clouds[cloud_name]
+
+    async def deploy_and_assert_grafana_agent(
+        self,
+        app: str,
+        channel: str = "latest/stable",
+        metrics: bool = False,
+        logging: bool = False,
+        dashboard: bool = False,
+    ) -> None:
+        """Deploy grafana-agent-k8s and add relate it with app.
+
+        Helper function to deploy and relate grafana-agent-k8s with provided app.
+        """
+        await deploy_and_assert_grafana_agent(
+            self.model, app, channel, metrics, logging, dashboard
+        )
