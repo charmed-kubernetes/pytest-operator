@@ -32,7 +32,7 @@ class TestPlugin:
             # test as an example, I included it directly here, since it's small. E.g.:
             # "tests/data/bundle.yaml",
             """
-                series: focal
+                series: jammy
                 applications:
                   reactive-framework:
                     charm: {{ charms["reactive-framework"] }}
@@ -40,6 +40,8 @@ class TestPlugin:
                   operator-framework:
                     charm: {{ charms["operator-framework"] }}
                     num_units: 1
+                relations:
+                    - ["reactive-framework:reactive", "operator-framework:operator"]
             """,
             charms=await ops_test.build_charms(*charms),
         )
@@ -112,6 +114,25 @@ class TestPlugin:
             with ops_test.model_context(model_alias):
                 raise ZeroDivisionError()
         assert ops_test.current_alias == prior_alias
+
+    async def test_4_get_relation_data(self, ops_test):
+        related = await ops_test.get_relation_data(
+            provider_endpoint="operator-framework/0:operator",
+            requirer_endpoint="reactive-framework/0:reactive",
+        )
+        assert related.provider.unit_data["units"] == '["reactive-framework/0"]'
+        assert related.requirer.unit_data["units"] == '["operator-framework/0"]'
+        assert related.provider.leader, "Should be leader"
+        assert related.requirer.leader, "Should be leader"
+
+        related = await ops_test.get_relation_data(
+            provider_endpoint="operator-framework/0:operator",
+            requirer_endpoint="reactive-framework/0",
+        )
+        assert related.provider.unit_data["units"] == '["reactive-framework/0"]'
+        assert related.requirer.unit_data["units"] == '["operator-framework/0"]'
+        assert related.provider.leader, "Should be leader"
+        assert related.requirer.leader, "Should be leader"
 
 
 @pytest.mark.asyncio

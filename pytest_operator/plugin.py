@@ -57,6 +57,8 @@ from juju.model import Controller, Model, websockets
 from kubernetes import client as k8s_client
 from kubernetes.client import Configuration as K8sConfiguration
 
+from pytest_operator.relation_data import get_relation_data, RelationData
+
 log = logging.getLogger(__name__)
 
 
@@ -1668,6 +1670,39 @@ class OpsTest:
         finally:
             # Whatever happens, we restore the interval.
             await model.set_config({update_interval_key: interval_after})
+
+    async def get_relation_data(
+        self,
+        *,
+        provider_endpoint: str,
+        requirer_endpoint: str,
+        include_juju_keys: bool = False,
+        refresh_cache: bool = False,
+    ) -> RelationData:
+        """Get relation databag contents for both sides of a juju relation.
+        Note: Depends on the presense of the juju client snap
+
+        include_juju_keys = True includes egress-subnets, ingress-address,
+                                 and private-address
+        refresh_cache = True will force a read-through cache from the controller
+
+        Usage:
+        >>> data = await ops_test.get_relation_data(
+        ...    provider_endpoint='prometheus/0:ingress',
+        ...    requirer_endpoint='traefik/1:ingress-per-unit')
+        >>> assert data.provider.application_data == {'foo': 'bar', 'baz': 'qux'}
+
+        """
+        if not self.model:
+            raise RuntimeError("No model currently set.")
+
+        return await get_relation_data(
+            self.model,
+            provider_endpoint,
+            requirer_endpoint,
+            include_juju_keys,
+            refresh_cache,
+        )
 
     def is_crash_dump_enabled(self) -> bool:
         """Returns whether Juju crash dump is enabled given the current settings."""
