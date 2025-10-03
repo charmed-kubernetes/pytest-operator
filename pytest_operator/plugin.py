@@ -1089,12 +1089,11 @@ class OpsTest:
     async def _cleanup_models(self):
         # remove clouds from most recently made, to first made
         # each model in the cloud will be forgotten
-        for cloud in reversed(self._clouds):
+        for cloud in list(reversed(self._clouds)):
             await self.forget_cloud(cloud)
 
         # remove models from most recently made, to first made
-        aliases = list(reversed(self._models.keys()))
-        for model in aliases:
+        for model in list(reversed(self._models)):
             await self.forget_model(model)
 
         await self._controller.disconnect()
