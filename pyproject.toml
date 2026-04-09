@@ -97,3 +97,6 @@ unit = [
   "pytest-cov>=5.0.0",
   "pytest-html",
 ]
+
+[tool.bandit]
+exclude_dirs = [".tox", ".venv", "venv"]
