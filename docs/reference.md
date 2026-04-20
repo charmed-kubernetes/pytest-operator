@@ -374,6 +374,27 @@ It is effectively a shortcut for:
     await ops_test.model.set_config({"update-status-hook-interval": <slow-interval>})
 ```
 
+#### `async def get_relation_data(self, *, provider_endpoint: str, requirer_endpoint: str, include_juju_keys: bool = False, refresh_cache: bool = False) -> RelationData`
+
+Retrieves the relation databags for two given endpoints.
+This can be used to verify that the relation data (unit, app) for either side has
+the expected shape.
+
+Note: Depends on the presense of the juju client snap
+
+`include_juju_keys = True` includes egress-subnets, ingress-address, and private-address
+`refresh_cache = True` will force a read-through cache from the controller
+
+
+```python
+data = await ops_test.get_relation_data(
+    provider_endpoint='my_app/0:ingress',
+    requirer_endpoint='other_app/1:ingress')
+assert data.provider.application_data == {'foo': 'bar', 
+                                          'baz': 'qux'}
+```
+
+
 #### `def abort(self, *args, **kwargs)`
 
 Fail the current test method and mark all remaining test methods as xfail.
